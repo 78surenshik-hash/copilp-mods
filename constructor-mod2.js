@@ -1,23 +1,26 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.0
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.1
    Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.0" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.1" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Изменения v2.0:
-   - ФИКС: не обновлялось превью при изменении параметров —
-     в ядре не были навешаны обработчики input/change на панель
-     настроек (потерялись при переносе из версии без ЛК).
-     Теперь панель работает как в v1.8 без ЛК.
-   - Усилено скрытие формы Тильды в сгенерированном коде:
-     стиль инжектируется первой операцией скрипта (форма скрыта
-     даже при сбое остального кода) + дублирующее скрытие через
-     JS (closest .t-rec) для браузеров без поддержки :has().
-   Ядро: виртуальный экран (390–1920) + зум, «В новой вкладке»,
-   ловец ошибок, авто-высота; устойчивость к динамической
-   подгрузке ЛК (grab в момент init, MutationObserver, bindOnce).
-   Порядок групп и дефолты панели — как в версии без ЛК (эталон).
+   Изменения v2.1:
+   - ФИКС (критический): обработчики панели настроек не
+     привязывались ни в v1.9, ни в v2.0 — флаг инициализации
+     __cxBound конфликтовал с флагом bindOnce, и bindOnce
+     молча выходил. Из-за этого превью не реагировало на
+     параметры. Флаги разведены (__cxInit / __cxBound).
+   - Наблюдатель за DOM теперь постоянный: если ЛК заменяет
+     разметку (сохранение, переход между страницами), новый
+     экземпляр инициализируется автоматически.
+   - Скрытие формы Тильды в сгенерированном коде — три слоя:
+     CSS первой операцией скрипта; немедленный JS-проход
+     (прячет и .t-rec); JS-проход с наблюдателем ~8 сек
+     (форма может отрисовываться позже скрипта).
+   Ядро превью — 1:1 из рабочей версии без ЛК (v1.8):
+   виртуальный экран 390–1920, зум Вписать/50/75/100,
+   «В новой вкладке», ловец ошибок, авто-высота, те же тайминги.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -141,11 +144,7 @@
   }
 
   /* ================================================================
-     ПРЕВЬЮ: виртуальный экран + зум.
-     Механика 1:1 из рабочей версии без ЛК (v1.8): те же тайминги
-     отчёта высоты (load +100/+500 мс), тот же запасной замер из
-     родителя (+120/+600 мс), тот же паддинг 16 — и в превью,
-     и в «В новой вкладке».
+     ПРЕВЬЮ: виртуальный экран + зум. Механика 1:1 из версии без ЛК.
      ================================================================ */
 
   var PV_WIDTHS = [390, 768, 1024, 1360, 1440, 1680, 1920];
@@ -191,7 +190,7 @@
     return m.demo ? m.demo.call(m, state) : '<p style="color:#8C97A5">Демо не задано</p>';
   }
 
-  /* --- сборка HTML превью-страницы (iframe / вкладка) — как в v1.8 --- */
+  /* --- сборка HTML превью-страницы (iframe / вкладка) --- */
   function buildPreviewHTML(body, o) {
     o = o || {};
     var pad = (o.pad != null) ? o.pad : 16;
@@ -311,7 +310,7 @@
     el.settings.innerHTML = html;
   }
 
-  /* делегированный обработчик панели — как в версии без ЛК */
+  /* делегированный обработчик панели — логика 1:1 из версии без ЛК */
   function onField(e) {
     var t = e.target, key = t.getAttribute('data-key');
     if (!key) return;
@@ -375,13 +374,15 @@
         !e.vscroll || !e.vclip || !e.vw || !e.zoom || !e.tabbtn) return false;
     el = e;
 
-    if (el.settings.__cxBound) return true;
-    el.settings.__cxBound = true;
+    /* этот экземпляр разметки уже инициализирован.
+       ФЛАГ ДРУГОЙ (__cxInit), не тот, что в bindOnce —
+       в v2.0 они совпадали, и обработчики не привязывались */
+    if (el.settings.__cxInit) return true;
+    el.settings.__cxInit = true;
 
-    /* ГЛАВНЫЙ ФИКС v2.0: обработчики панели настроек.
-       В v1.9 их не было — превью не реагировало на параметры. */
-    bindOnce(el.settings, 'input', onField);
-    bindOnce(el.settings, 'change', onField);
+    /* обработчики панели — напрямую, как в версии без ЛК */
+    el.settings.addEventListener('input', onField);
+    el.settings.addEventListener('change', onField);
 
     bindOnce(el.gen, 'click', function () {
       try { currentCode = mods[activeId].generate(state); }
@@ -431,14 +432,15 @@
   }
 
   function boot() {
-    if (init()) return;
-    var mo = new MutationObserver(function () {
-      if (init() && !el.settings.__cxLogged) {
-        el.settings.__cxLogged = true;
-        console.info('[DEV MODS] Конструктор инициализирован после динамической вставки разметки');
-      }
-    });
+    var ok = init();
+    /* наблюдатель держим ВСЕГДА: ЛК может заменить разметку
+       (сохранение, переход между страницами) — свежий экземпляр
+       разметки инициализируется автоматически, флагов на новых
+       элементах нет, двойных обработчиков не будет */
+    var mo = new MutationObserver(function () { init(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
+    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.1)');
+    else console.info('[DEV MODS] Разметки ещё нет — инициализация по появлению блока');
   }
 
   if (document.readyState === 'loading') {
@@ -590,7 +592,7 @@
       fontHeadStack: FONTS[headName] ? FONTS[headName].stack : 'inherit',
       fontTextStack: FONTS[textName] ? FONTS[textName].stack : 'inherit',
       fontImport: fontImportOf(headName, textName),
-      step: 360 / sectors.length
+      step: Math.round((360 / sectors.length) * 1000) / 1000
     };
   }
 
@@ -838,19 +840,22 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
 
     function q(sel) { return root ? root.querySelector(sel) : null; }
 
-    /* ---------- дублирующее скрытие формы Тильды (JS-фолбэк) ----------
-       CSS уже скрывает форму; этот фолбэк нужен для браузеров без
-       поддержки :has() — прячем ещё и блок-родитель .t-rec целиком. */
+    /* ---------- скрытие формы Тильды (JS-слой) ----------
+       CSS уже прячет форму; JS нужен, чтобы спрятать и блок-родитель
+       .t-rec (для браузеров без :has()) и поймать формы, которые
+       Тильда отрисовывает ПОЗЖЕ скрипта — поэтому вызываем повторно. */
     function hideTildaForm() {
       if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
       var form = document.querySelector(CFG.tildaFormSelector);
       if (!form) return;
-      form.style.display = 'none';
+      if (form.style.display !== 'none') {
+        form.style.display = 'none';
+        log('Форма скрыта (JS):', CFG.tildaFormSelector);
+      }
       if (form.closest) {
         var rec = form.closest('.t-rec');
-        if (rec) rec.style.display = 'none';
+        if (rec && rec.style.display !== 'none') rec.style.display = 'none';
       }
-      log('Форма скрыта (JS-фолбэк):', CFG.tildaFormSelector);
     }
 
     function paintIcons() {
@@ -1085,8 +1090,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       if (root.__wofReady) return true;
       root.__wofReady = true;
 
-      /* стиль обычно уже вставлен обёрткой; страховка на случай,
-         если вставка в head по какой-то причине не удалась */
+      /* стиль обычно уже вставлен обёрткой; страховка */
       if (!document.getElementById('wofStyle')) {
         try {
           var st = document.createElement('style');
@@ -1113,8 +1117,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         clearTimeout(rt);
         rt = setTimeout(fitWheel, 150);
       });
-      /* повторная подгонка после загрузки шрифтов (иначе замер ширины
-         мог пройти до подгрузки и колесо оставалось не в масштабе) */
+      /* повторная подгонка после загрузки шрифтов */
       if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
         document.fonts.ready.then(function () { fitWheel(); });
       }
@@ -1152,7 +1155,6 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
     var o = collectOpts(v);
     var tx = collectTexts(v);
     var sectors = parseSectors(v.sectors);
-    o.step = Math.round((360 / sectors.length) * 1000) / 1000;
 
     var css = buildCss(o);
     var html = '<div class="wof">' + buildHtml(tx, o) + '</div>';
@@ -1190,14 +1192,23 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  var WOF_CSS = ' + jsStr(css) + ';' + NL + NL +
       '  var WOF_HTML = ' + jsStr(html) + ';' + NL + NL +
       '  var WOF_LOGIC = ' + WOF_LOGIC.toString() + ';' + NL + NL +
-      /* СТИЛЬ — ПЕРВОЙ ЖЕ ОПЕРАЦИЕЙ: форма Тильды скрыта сразу,
-         даже если в остальном коде что-то пойдёт не так (v2.0) */
+      /* СЛОЙ 1: стиль — первой же операцией. Форма скрыта сразу,
+         даже если дальше что-то пойдёт не так */
       '  try {' + NL +
       '    if (!document.getElementById("wofStyle")) {' + NL +
       '      var wst = document.createElement("style");' + NL +
       '      wst.id = "wofStyle";' + NL +
       '      wst.textContent = WOF_CSS;' + NL +
       '      document.head.appendChild(wst);' + NL +
+      '    }' + NL +
+      '  } catch (e) {}' + NL +
+      /* СЛОЙ 2: немедленный JS-проход — прячем форму и её .t-rec
+         (для браузеров без поддержки :has()) */
+      '  try {' + NL +
+      '    var whf = document.querySelector(CFG.tildaFormSelector);' + NL +
+      '    if (whf) {' + NL +
+      '      whf.style.display = "none";' + NL +
+      '      if (whf.closest) { var wr = whf.closest(".t-rec"); if (wr) wr.style.display = "none"; }' + NL +
       '    }' + NL +
       '  } catch (e) {}' + NL +
       NL +
@@ -1212,6 +1223,8 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(root, anchor); }' + NL +
       '  else { (document.body || document.documentElement).appendChild(root); }' + NL +
       '  root.innerHTML = WOF_HTML;' + NL + NL +
+      /* СЛОЙ 3 внутри WOF_LOGIC: наблюдатель добивает формы,
+         отрисованные Тильдой позже скрипта */
       '  try { WOF_LOGIC(); } catch (e) { if (CFG.debug) console.log("[Колесо] ошибка:", e); }' + NL +
       '})();' + NL +
       S_CLOSE;
