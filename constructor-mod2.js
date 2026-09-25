@@ -1,23 +1,30 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.2
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.3
    Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.2" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.3" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
+   Изменения v2.3:
+   - карточка «Превью» закрепляется при прокрутке (position:sticky,
+     прижата к верху экрана, пока скроллятся настройки слева);
+   - карточка умещается в высоту экрана: тулбар виден всегда,
+     высокое превью скроллится внутри карточки;
+   - кнопка «Закрепить превью» в тулбаре (вкл/выкл, запоминается
+     в localStorage, по умолчанию ВКЛ);
+   - на мобильной раскладке (≤920px) закрепление отключается;
+   - стили закрепления инжектируются из внешнего файла —
+     T123 менять не нужно (только ?v=).
    Изменения v2.2:
-   - порядок групп панели по эталону: 1. Блок и карточка,
-     2. Цвета, 3. Колесо, 4. Шрифты, 5. Размеры шрифтов,
-     6. Тексты, 7. Сектора колеса, 8. Счётчик подарков,
-     9. Отправка в форму Тильды, 10. Служебное
-     (первая группа открывается по умолчанию)
-   - скрытие формы Тильды усилено в сгенерированном коде:
-     авточинка класса, вписанного с точкой (.uc-coleso → uc-coleso);
-     наблюдатель до 8 сек ловит формы, отрисованные позже скрипта;
-     debug-логи: найдена/скрыта/не найдена
-   Ядро v2.1: виртуальный экран 390–1920, зум, «В новой вкладке»,
-   ловец ошибок, авто-высота; устойчивость к ЛК (grab в момент
-   init, MutationObserver, флаги __cxInit/__cxBound разведены).
+   - порядок групп панели: 1. Блок и карточка, 2. Цвета, 3. Колесо,
+     4. Шрифты, 5. Размеры шрифтов, 6. Тексты, 7. Сектора колеса,
+     8. Счётчик подарков, 9. Отправка в форму Тильды, 10. Служебное
+   - скрытие формы Тильды: авточинка класса с точкой, наблюдатель
+     до 8 сек, debug-логи
+   Изменения v2.1: фикс привязки обработчиков панели (флаги
+   __cxInit/__cxBound разведены), постоянный MutationObserver.
+   Ядро превью — 1:1 из версии без ЛК: виртуальный экран
+   390–1920, зум Вписать/50/75/100, «В новой вкладке».
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -264,6 +271,24 @@
     setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
   }
 
+  /* ================================================================
+     ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (v2.3). Стили инжектируются отсюда, чтобы
+     T123 не пришлось трогать. Класс cx-sticky вешается на карточку:
+     position:sticky + потолок по высоте экрана, тулбар всегда
+     виден, высокое превью скроллится внутри карточки.
+     ================================================================ */
+  function injectStickyCss() {
+    if (document.getElementById('cxStickyStyle')) return;
+    var st = document.createElement('style');
+    st.id = 'cxStickyStyle';
+    st.textContent =
+      '.cx-frame-box.cx-sticky{position:sticky;top:12px;z-index:20;max-height:calc(100vh - 24px);display:flex;flex-direction:column}' +
+      '.cx-frame-box.cx-sticky .cx-vscroll{flex:1 1 auto;min-height:0;overflow-y:auto}' +
+      '@media(max-width:920px){.cx-frame-box.cx-sticky{position:static;max-height:none;display:block}}' +
+      '.cx-sticky-btn{flex:none}';
+    document.head.appendChild(st);
+  }
+
   /* ============ панель настроек ============ */
   function renderSettings() {
     var m = mods[activeId];
@@ -371,6 +396,8 @@
         !e.vscroll || !e.vclip || !e.vw || !e.zoom || !e.tabbtn) return false;
     el = e;
 
+    injectStickyCss();
+
     /* этот экземпляр разметки уже инициализирован.
        Флаг другой (__cxInit), не тот, что в bindOnce (__cxBound) */
     if (el.settings.__cxInit) return true;
@@ -411,6 +438,32 @@
     });
     bindOnce(el.tabbtn, 'click', openTab);
 
+    /* --- кнопка «Закрепить превью» (v2.3) ---
+       Кнопка создаётся скриптом в тулбаре, T123 не трогаем.
+       Состояние запоминается; по умолчанию — закреплено. */
+    var cardBox = (el.frame.closest && el.frame.closest('.cx-frame-box')) ||
+                  document.querySelector('.cx-frame-box');
+    if (cardBox) {
+      var sBtn = document.createElement('button');
+      sBtn.type = 'button';
+      sBtn.className = 'cx-btn cx-sticky-btn';
+      sBtn.textContent = 'Закрепить превью';
+      el.tabbtn.parentNode.insertBefore(sBtn, el.tabbtn);
+      var stickyApply = function (on) {
+        cardBox.classList.toggle('cx-sticky', !!on);
+        sBtn.classList.toggle('cx-btn-primary', !!on);
+        sBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      };
+      var stickyOn = true;
+      try { stickyOn = localStorage.getItem('cxb:sticky') !== '0'; } catch (e) {}
+      stickyApply(stickyOn);
+      sBtn.addEventListener('click', function () {
+        var on = !cardBox.classList.contains('cx-sticky');
+        stickyApply(on);
+        try { localStorage.setItem('cxb:sticky', on ? '1' : '0'); } catch (e) {}
+      });
+    }
+
     if (!document.__cxEscBound) {
       document.__cxEscBound = true;
       document.addEventListener('keydown', function (ev) {
@@ -434,7 +487,7 @@
        разметки инициализируется автоматически */
     var mo = new MutationObserver(function () { init(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
-    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.2)');
+    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.3)');
     else console.info('[DEV MODS] Разметки ещё нет — инициализация по появлению блока');
   }
 
@@ -835,15 +888,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
 
     function q(sel) { return root ? root.querySelector(sel) : null; }
 
-    /* ---------- скрытие формы Тильды (JS-слой) ----------
-       CSS уже прячет форму. JS дополнительно:
-       1) прячет блок-родитель .t-rec (для браузеров без :has());
-       2) чинит частую ошибку — класс, вписанный в настройках
-          блока Тильды С ТОЧКОЙ (.uc-coleso): в DOM такой класс
-          содержит точку в имени, селектор .uc-coleso его не
-          находит. Убираем точку из имени класса;
-       3) работает через наблюдатель: Тильда может отрисовать
-          форму позже, чем выполнится наш скрипт. */
+    /* ---------- скрытие формы Тильды (JS-слой) ---------- */
     var hideWarned = false;
     function hideTildaForm() {
       if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
@@ -892,8 +937,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       }
     }
 
-    /* наблюдатель скрытия — запускается всегда, независимо от того,
-       как прошла инициализация колеса */
+    /* наблюдатель скрытия — запускается всегда */
     function startHideWatch() {
       if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
       hideTildaForm();
@@ -956,9 +1000,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       }
     }
 
-    /* колесо 560px масштабируется под реальную ширину контейнера.
-       Перезаписываем стили только при изменении ширины — чтобы не
-       дёргать лишними пересчётами высоты превью конструктора. */
+    /* колесо 560px масштабируется под реальную ширину контейнера */
     var lastFitW = 0;
     function fitWheel() {
       var box = q('#wofWheelbox');
@@ -1136,7 +1178,6 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       if (root.__wofReady) return true;
       root.__wofReady = true;
 
-      /* стиль обычно уже вставлен обёрткой; страховка */
       if (!document.getElementById('wofStyle')) {
         try {
           var st = document.createElement('style');
@@ -1163,7 +1204,6 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         clearTimeout(rt);
         rt = setTimeout(fitWheel, 150);
       });
-      /* повторная подгонка после загрузки шрифтов */
       if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
         document.fonts.ready.then(function () { fitWheel(); });
       }
@@ -1237,8 +1277,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  var WOF_CSS = ' + jsStr(css) + ';' + NL + NL +
       '  var WOF_HTML = ' + jsStr(html) + ';' + NL + NL +
       '  var WOF_LOGIC = ' + WOF_LOGIC.toString() + ';' + NL + NL +
-      /* СЛОЙ 1: стиль — первой же операцией. Форма скрыта сразу,
-         даже если дальше что-то пойдёт не так */
+      /* СЛОЙ 1: стиль — первой же операцией */
       '  try {' + NL +
       '    if (!document.getElementById("wofStyle")) {' + NL +
       '      var wst = document.createElement("style");' + NL +
@@ -1247,8 +1286,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '      document.head.appendChild(wst);' + NL +
       '    }' + NL +
       '  } catch (e) {}' + NL +
-      /* СЛОЙ 2: немедленный JS-проход — прячем форму и её .t-rec
-         (для браузеров без поддержки :has()) */
+      /* СЛОЙ 2: немедленный JS-проход */
       '  try {' + NL +
       '    var whf = document.querySelector(CFG.tildaFormSelector);' + NL +
       '    if (whf) {' + NL +
@@ -1268,8 +1306,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(root, anchor); }' + NL +
       '  else { (document.body || document.documentElement).appendChild(root); }' + NL +
       '  root.innerHTML = WOF_HTML;' + NL + NL +
-      /* СЛОЙ 3 внутри WOF_LOGIC: автопочинка класса с точкой +
-         наблюдатель добивает формы, отрисованные позже скрипта */
+      /* СЛОЙ 3 внутри WOF_LOGIC: авточинка класса + наблюдатель */
       '  try { WOF_LOGIC(); } catch (e) { if (CFG.debug) console.log("[Колесо] ошибка:", e); }' + NL +
       '})();' + NL +
       S_CLOSE;
