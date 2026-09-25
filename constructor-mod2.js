@@ -1216,4 +1216,66 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         { key: 'cardRadius',   type: 'range', label: 'Скругление карточки', unit: 'px', min: 0, max: 60, def: 24 },
         { key: 'cardPad',      type: 'range', label: 'Внутренние отступы карточки', unit: 'px', min: 20, max: 90, def: 48,
           hint: 'Поля внутри карточки со всех сторон (верх/низ/лево/право)' },
-        { key: 'gapCols',      type: 'range', label: 'Рас
+        { key: 'gapCols',      type: 'range', label: 'Расстояние между колонками', unit: 'px', min: 20, max: 120, def: 48,
+          hint: 'Зазор между текстовой колонкой и колесом.' },
+        { key: 'colLeft',      type: 'range', label: 'Левая колонка на ПК (правая = остаток)', unit: '%', min: 30, max: 70, def: 45, newRow: true,
+          hint: 'Работает на экранах шире 1220px. По умолчанию: 45% — текст и форма, 55% — колесо. Превью показывает настоящую раскладку (виртуальный экран = реальная ширина).' },
+        { key: 'stretchLeft',  type: 'toggle', label: 'Левая колонка до низа карточки (ПК)', def: true },
+        { key: 'cardRadiusSm', type: 'range', label: 'Скругление карточки на смартфонах', unit: 'px', min: 0, max: 60, def: 18, newRow: true }
+      ]},
+      { title: 'Колесо', items: [
+        { key: 'wheelSize', type: 'range',  label: 'Размер колеса', unit: 'px', min: 280, max: 640, step: 2, def: 520 },
+        { key: 'rimWidth',  type: 'range',  label: 'Толщина обода', unit: 'px', min: 2, max: 24, def: 10 },
+        { key: 'showDots',  type: 'toggle', label: 'Точки на ободе', def: true }
+      ]},
+      { title: 'Шрифты', items: [
+        { key: 'fontHead', type: 'select', label: 'Заголовки и кнопки', options: FONT_OPTS, def: 'Oswald' },
+        { key: 'fontText', type: 'select', label: 'Основной текст', options: FONT_OPTS, def: 'Inter' }
+      ]},
+      { title: 'Размеры шрифтов', items: [
+        { key: 'fsTitle',    type: 'range', label: 'Главный заголовок · ПК', unit: 'px', min: 20, max: 80, def: 44 },
+        { key: 'fsTitleMd',  type: 'range', label: 'Главный заголовок · планшет', unit: 'px', min: 20, max: 80, def: 36 },
+        { key: 'fsTitleSm',  type: 'range', label: 'Главный заголовок · смартфон', unit: 'px', min: 16, max: 80, def: 27 },
+        { key: 'fsOnly',     type: 'range', label: '«Только до…» · ПК', unit: 'px', min: 10, max: 40, def: 18 },
+        { key: 'fsOnlySm',   type: 'range', label: '«Только до…» · смартфон', unit: 'px', min: 10, max: 40, def: 15 },
+        { key: 'fsPrize',    type: 'range', label: 'Название приза · ПК', unit: 'px', min: 14, max: 60, def: 26 },
+        { key: 'fsPrizeSm',  type: 'range', label: 'Название приза · смартфон', unit: 'px', min: 12, max: 60, def: 20 },
+        { key: 'fsText',     type: 'range', label: 'Основной текст · ПК', unit: 'px', min: 11, max: 30, def: 16 },
+        { key: 'fsTextSm',   type: 'range', label: 'Основной текст · смартфон', unit: 'px', min: 10, max: 30, def: 14 }
+      ]},
+      { title: 'Счётчик подарков', items: [
+        { key: 'showBadge',    type: 'toggle', label: 'Показывать счётчик над колесом', def: true },
+        { key: 'giftsTotal',   type: 'number', label: 'Сколько всего подарков', def: 50 },
+        { key: 'counterLabel', type: 'text',   label: 'Подпись счётчика', def: 'Осталось' }
+      ]},
+      { title: 'Тексты', items: [
+        { key: 'eyebrow',          type: 'text',     label: 'Надстрочник над заголовком', def: 'Подарки клиентам' },
+        { key: 'onlyBefore',       type: 'text',     label: '«Только до» — текст', def: 'Только до' },
+        { key: 'onlyAfter',        type: 'text',     label: '«Только до» — дата (зелёным)', def: '31 декабря' },
+        { key: 'titleHtml',        type: 'textarea', rows: 3, label: 'Главный заголовок (можно <mark>…</mark> для зелёной плашки)', def: 'Крутите колесо и получите <mark>подарок</mark> к ремонту' },
+        { key: 'note',             type: 'textarea', rows: 2, label: 'Подзаголовок', def: 'Один оборот на человека. Крутите — выпадет подарок, а мы запишем его за вами.' },
+        { key: 'giftLabel',        type: 'text',     label: 'Подпись в блоке приза', def: 'Ваш подарок' },
+        { key: 'prizeDefault',     type: 'textarea', rows: 2, label: 'Название приза до вращения', def: 'Здесь появится ваш приз' },
+        { key: 'prizeSubDefault',  type: 'textarea', rows: 2, label: 'Описание приза до вращения', def: 'Крутите колесо, чтобы узнать, что вам выпадет.' },
+        { key: 'spinBtn',          type: 'text',     label: 'Кнопка в центре колеса', def: 'Крутить' },
+        { key: 'lockHint',         type: 'text',     label: 'Подсказка под формой (пока не крутанули)', def: 'Форма откроется после вращения колеса' },
+        { key: 'phonePlaceholder', type: 'text',     label: 'Подсказка в поле телефона', def: '+7 (___) ___-__-__' },
+        { key: 'submitText',       type: 'text',     label: 'Кнопка отправки', def: 'Получить' },
+        { key: 'errorText',        type: 'text',     label: 'Текст ошибки', def: 'Введите корректный номер телефона' },
+        { key: 'successTitle',     type: 'text',     label: 'Заголовок успеха', def: 'Заявка принята!' },
+        { key: 'successText',      type: 'textarea', rows: 2, label: 'Текст успеха', def: 'Перезвоним в течение 15 минут в рабочее время и запишем подарок за вами.' }
+      ]},
+      { title: 'Отправка в форму Тильды', items: [
+        { key: 'useTildaForm',       type: 'toggle', label: 'Отправлять через скрытую форму Тильды', def: true },
+        { key: 'tildaFormSelector',  type: 'text',   label: 'CSS-класс формы', def: '.uc-coleso', hint: 'Класс вешается на БЛОК с формой, не на саму форму.' }
+      ]},
+      { title: 'Служебное', items: [
+        { key: 'keyPrefix', type: 'text',   label: 'Префикс ключей localStorage', def: 'wof_' },
+        { key: 'debug',     type: 'toggle', label: 'debug — логи в консоли', def: false }
+      ]}
+    ],
+    demo: wofDemo,
+    generate: wofGenerate
+  });
+
+})();
