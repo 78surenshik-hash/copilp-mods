@@ -1,28 +1,25 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.3
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.4
    Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.3" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.4" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Изменения v2.3:
-   - карточка «Превью» закрепляется при прокрутке (position:sticky,
-     прижата к верху экрана, пока скроллятся настройки слева);
-   - карточка умещается в высоту экрана: тулбар виден всегда,
-     высокое превью скроллится внутри карточки;
-   - кнопка «Закрепить превью» в тулбаре (вкл/выкл, запоминается
-     в localStorage, по умолчанию ВКЛ);
-   - на мобильной раскладке (≤920px) закрепление отключается;
-   - стили закрепления инжектируются из внешнего файла —
-     T123 менять не нужно (только ?v=).
-   Изменения v2.2:
-   - порядок групп панели: 1. Блок и карточка, 2. Цвета, 3. Колесо,
-     4. Шрифты, 5. Размеры шрифтов, 6. Тексты, 7. Сектора колеса,
-     8. Счётчик подарков, 9. Отправка в форму Тильды, 10. Служебное
-   - скрытие формы Тильды: авточинка класса с точкой, наблюдатель
-     до 8 сек, debug-логи
-   Изменения v2.1: фикс привязки обработчиков панели (флаги
-   __cxInit/__cxBound разведены), постоянный MutationObserver.
+   Изменения v2.4:
+   - закрепление превью переделано:
+     · блок «Как подключить» переносится под сетку на всю ширину
+       (превью больше не перекрывает контент под собой);
+     · при включённом закреплении правая колонка растягивается на
+       высоту левой — sticky-превью едет по всей высоте настроек,
+       не «останавливается» и не уходит со скроллом;
+     · отступ закрепления сверху 90px (под меню Тильды);
+     · при выключении кнопкой колонка возвращается к обычному виду;
+   - мобильная раскладка (≤920px) — как раньше, без закрепления.
+   Изменения v2.3: sticky-превью, кнопка «Закрепить превью».
+   Изменения v2.2: порядок групп панели, усиленное скрытие формы
+   Тильды (авточинка класса с точкой, наблюдатель, debug-логи).
+   Изменения v2.1: фикс привязки обработчиков панели, постоянный
+   MutationObserver.
    Ядро превью — 1:1 из версии без ЛК: виртуальный экран
    390–1920, зум Вписать/50/75/100, «В новой вкладке».
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
@@ -33,6 +30,9 @@
 
   var NL = String.fromCharCode(10);
   var S_CLOSE = '</scr' + 'ipt>';
+
+  /* отступ закреплённого превью от верха экрана (меню Тильды) */
+  var STICKY_TOP = 90;
 
   var mods = {};
   var activeId = null;
@@ -272,19 +272,30 @@
   }
 
   /* ================================================================
-     ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (v2.3). Стили инжектируются отсюда, чтобы
-     T123 не пришлось трогать. Класс cx-sticky вешается на карточку:
-     position:sticky + потолок по высоте экрана, тулбар всегда
-     виден, высокое превью скроллится внутри карточки.
+     ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (v2.4).
+     1) «Как подключить» переносится под сетку — превью нечего
+        перекрывать.
+     2) При включённом закреплении правая колонка растягивается на
+        высоту левой (.cx-grid.cx-stretch) — sticky-превью едет по
+        всей высоте настроек.
+     3) Отступ сверху — STICKY_TOP (90px, под меню Тильды).
+     Стили инжектируются отсюда — T123 менять не нужно.
      ================================================================ */
   function injectStickyCss() {
     if (document.getElementById('cxStickyStyle')) return;
     var st = document.createElement('style');
     st.id = 'cxStickyStyle';
     st.textContent =
-      '.cx-frame-box.cx-sticky{position:sticky;top:12px;z-index:20;max-height:calc(100vh - 24px);display:flex;flex-direction:column}' +
+      '/* DEV MODS: закрепление превью (v2.4) */' +
+      '.cx-grid.cx-stretch{align-items:stretch}' +
+      '.cx-frame-box.cx-sticky{position:sticky;top:' + STICKY_TOP + 'px;z-index:20;' +
+      'max-height:calc(100vh - ' + (STICKY_TOP + 12) + 'px);display:flex;flex-direction:column}' +
       '.cx-frame-box.cx-sticky .cx-vscroll{flex:1 1 auto;min-height:0;overflow-y:auto}' +
-      '@media(max-width:920px){.cx-frame-box.cx-sticky{position:static;max-height:none;display:block}}' +
+      '@media(max-width:920px){' +
+      '.cx-grid.cx-stretch{align-items:start}' +
+      '.cx-frame-box.cx-sticky{position:static;max-height:none;display:block}' +
+      '.cx-frame-box.cx-sticky .cx-vscroll{overflow-y:visible}' +
+      '}' +
       '.cx-sticky-btn{flex:none}';
     document.head.appendChild(st);
   }
@@ -438,19 +449,35 @@
     });
     bindOnce(el.tabbtn, 'click', openTab);
 
-    /* --- кнопка «Закрепить превью» (v2.3) ---
-       Кнопка создаётся скриптом в тулбаре, T123 не трогаем.
-       Состояние запоминается; по умолчанию — закреплено. */
+    /* --- закрепление превью (v2.4) ---
+       1) «Как подключить» — под сетку на всю ширину (идемпотентно:
+          если ЛК пересоздаст разметку, перенос повторится).
+       2) Кнопка «Закрепить превью»: sticky-карточка + растяжение
+          правой колонки под высоту левой. T123 не трогаем. */
     var cardBox = (el.frame.closest && el.frame.closest('.cx-frame-box')) ||
                   document.querySelector('.cx-frame-box');
+    var rightCol = cardBox ? cardBox.parentNode : null;
+    var grid = (rightCol && rightCol.classList && rightCol.classList.contains('cx-grid'))
+      ? rightCol
+      : (rightCol && rightCol.parentNode && rightCol.parentNode.classList && rightCol.parentNode.classList.contains('cx-grid'))
+        ? rightCol.parentNode
+        : null;
+
+    /* перенос «Как подключить» под сетку (только если он ещё внутри колонки) */
+    if (grid && el.connect && el.connect.parentNode === rightCol) {
+      grid.parentNode.insertBefore(el.connect, grid.nextSibling);
+    }
+
     if (cardBox) {
       var sBtn = document.createElement('button');
       sBtn.type = 'button';
       sBtn.className = 'cx-btn cx-sticky-btn';
       sBtn.textContent = 'Закрепить превью';
       el.tabbtn.parentNode.insertBefore(sBtn, el.tabbtn);
+
       var stickyApply = function (on) {
         cardBox.classList.toggle('cx-sticky', !!on);
+        if (grid) grid.classList.toggle('cx-stretch', !!on);
         sBtn.classList.toggle('cx-btn-primary', !!on);
         sBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
       };
@@ -487,7 +514,7 @@
        разметки инициализируется автоматически */
     var mo = new MutationObserver(function () { init(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
-    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.3)');
+    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.4)');
     else console.info('[DEV MODS] Разметки ещё нет — инициализация по появлению блока');
   }
 
