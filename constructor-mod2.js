@@ -1,21 +1,23 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v1.9
-   Файл: constructor-mod2.js · внешний (Netlify: copilp-mods)
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.0
+   Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://copilp-mods.netlify.app/constructor-mod2.js?v=1.9" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.0" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
+   Изменения v2.0:
+   - ФИКС: не обновлялось превью при изменении параметров —
+     в ядре не были навешаны обработчики input/change на панель
+     настроек (потерялись при переносе из версии без ЛК).
+     Теперь панель работает как в v1.8 без ЛК.
+   - Усилено скрытие формы Тильды в сгенерированном коде:
+     стиль инжектируется первой операцией скрипта (форма скрыта
+     даже при сбое остального кода) + дублирующее скрытие через
+     JS (closest .t-rec) для браузеров без поддержки :has().
    Ядро: виртуальный экран (390–1920) + зум, «В новой вкладке»,
    ловец ошибок, авто-высота; устойчивость к динамической
    подгрузке ЛК (grab в момент init, MutationObserver, bindOnce).
-   Изменения v1.9:
-   - панель приведена к версии без ЛК: группа «Блок и карточка» —
-     подписи, подсказки, дефолты и порядок как на эталоне;
-     порядок групп выровнен по v1.8 без ЛК
-   - ядро превью = точная копия рабочей версии без ЛК
-     (отчёт высоты и тайминги 1:1, без доп. циклов)
-   - модуль: fitWheel без лишних перезаписей стилей и с
-     повторной подгонкой после загрузки шрифтов
+   Порядок групп и дефолты панели — как в версии без ЛК (эталон).
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -309,6 +311,7 @@
     el.settings.innerHTML = html;
   }
 
+  /* делегированный обработчик панели — как в версии без ЛК */
   function onField(e) {
     var t = e.target, key = t.getAttribute('data-key');
     if (!key) return;
@@ -374,6 +377,11 @@
 
     if (el.settings.__cxBound) return true;
     el.settings.__cxBound = true;
+
+    /* ГЛАВНЫЙ ФИКС v2.0: обработчики панели настроек.
+       В v1.9 их не было — превью не реагировало на параметры. */
+    bindOnce(el.settings, 'input', onField);
+    bindOnce(el.settings, 'change', onField);
 
     bindOnce(el.gen, 'click', function () {
       try { currentCode = mods[activeId].generate(state); }
@@ -814,8 +822,8 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       if (!CFG.debug) return;
       try { console.log.apply(console, ['[Колесо]'].concat([].slice.call(arguments))); } catch (e) {}
     }
-    function fireEv(el, t) { try { el.dispatchEvent(new Event(t, { bubbles: true })); } catch (e) {} }
-    function setVal(el, v) { el.value = v; fireEv(el, 'input'); fireEv(el, 'change'); }
+    function fireEv(elm, t) { try { elm.dispatchEvent(new Event(t, { bubbles: true })); } catch (e) {} }
+    function setVal(elm, v) { elm.value = v; fireEv(elm, 'input'); fireEv(elm, 'change'); }
     function lsGet(k) { try { return localStorage.getItem(CFG.keyPrefix + k); } catch (e) { return null; } }
     function lsSet(k, v) { try { localStorage.setItem(CFG.keyPrefix + k, v); } catch (e) {} }
     function plural(n, one, few, many) {
@@ -829,6 +837,21 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
     var root = null;
 
     function q(sel) { return root ? root.querySelector(sel) : null; }
+
+    /* ---------- дублирующее скрытие формы Тильды (JS-фолбэк) ----------
+       CSS уже скрывает форму; этот фолбэк нужен для браузеров без
+       поддержки :has() — прячем ещё и блок-родитель .t-rec целиком. */
+    function hideTildaForm() {
+      if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
+      var form = document.querySelector(CFG.tildaFormSelector);
+      if (!form) return;
+      form.style.display = 'none';
+      if (form.closest) {
+        var rec = form.closest('.t-rec');
+        if (rec) rec.style.display = 'none';
+      }
+      log('Форма скрыта (JS-фолбэк):', CFG.tildaFormSelector);
+    }
 
     function paintIcons() {
       var list = root.querySelectorAll('[data-ic]');
@@ -1062,13 +1085,18 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       if (root.__wofReady) return true;
       root.__wofReady = true;
 
+      /* стиль обычно уже вставлен обёрткой; страховка на случай,
+         если вставка в head по какой-то причине не удалась */
       if (!document.getElementById('wofStyle')) {
-        var st = document.createElement('style');
-        st.id = 'wofStyle';
-        st.textContent = WOF_CSS;
-        document.head.appendChild(st);
+        try {
+          var st = document.createElement('style');
+          st.id = 'wofStyle';
+          st.textContent = WOF_CSS;
+          document.head.appendChild(st);
+        } catch (e) {}
       }
 
+      hideTildaForm();
       paintIcons();
       buildWheel();
       fitWheel();
@@ -1099,9 +1127,11 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
     }
 
     function boot() {
+      hideTildaForm();
       if (init()) return;
       var tries = 0;
       var mo = new MutationObserver(function () {
+        hideTildaForm();
         if (init() || ++tries > 60) mo.disconnect();
       });
       mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -1160,18 +1190,29 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  var WOF_CSS = ' + jsStr(css) + ';' + NL + NL +
       '  var WOF_HTML = ' + jsStr(html) + ';' + NL + NL +
       '  var WOF_LOGIC = ' + WOF_LOGIC.toString() + ';' + NL + NL +
+      /* СТИЛЬ — ПЕРВОЙ ЖЕ ОПЕРАЦИЕЙ: форма Тильды скрыта сразу,
+         даже если в остальном коде что-то пойдёт не так (v2.0) */
+      '  try {' + NL +
+      '    if (!document.getElementById("wofStyle")) {' + NL +
+      '      var wst = document.createElement("style");' + NL +
+      '      wst.id = "wofStyle";' + NL +
+      '      wst.textContent = WOF_CSS;' + NL +
+      '      document.head.appendChild(wst);' + NL +
+      '    }' + NL +
+      '  } catch (e) {}' + NL +
+      NL +
       '  var anchor = document.currentScript;' + NL +
       '  if (!anchor) {' + NL +
-      '    var sc = document.getElementsByTagName("script");' + NL +
-      '    anchor = sc[sc.length - 1];' + NL +
+      '    var wsc = document.getElementsByTagName("script");' + NL +
+      '    anchor = wsc[wsc.length - 1];' + NL +
       '  }' + NL +
       '  var root = document.createElement("div");' + NL +
       '  root.className = "wof";' + NL +
       '  root.id = "wofRoot";' + NL +
       '  if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(root, anchor); }' + NL +
-      '  else { document.body.appendChild(root); }' + NL +
+      '  else { (document.body || document.documentElement).appendChild(root); }' + NL +
       '  root.innerHTML = WOF_HTML;' + NL + NL +
-      '  WOF_LOGIC();' + NL +
+      '  try { WOF_LOGIC(); } catch (e) { if (CFG.debug) console.log("[Колесо] ошибка:", e); }' + NL +
       '})();' + NL +
       S_CLOSE;
   }
