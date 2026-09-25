@@ -1,16 +1,23 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v1.8
-   Файл: constructor-wof.js · внешний, Netlify (copilp-mods)
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v1.9
+   Файл: constructor-mod2.js · внешний (Netlify: copilp-mods)
    Подключение (T123):
-   <script src="https://copilp-mods.netlify.app/constructor-wof.js?v=1.8" defer></script>
+   <script src="https://copilp-mods.netlify.app/constructor-mod2.js?v=1.9" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
    Ядро: виртуальный экран (390–1920) + зум, «В новой вкладке»,
    ловец ошибок, авто-высота; устойчивость к динамической
    подгрузке ЛК (grab в момент init, MutationObserver, bindOnce).
+   Изменения v1.9:
+   - панель приведена к версии без ЛК: группа «Блок и карточка» —
+     подписи, подсказки, дефолты и порядок как на эталоне;
+     порядок групп выровнен по v1.8 без ЛК
+   - ядро превью = точная копия рабочей версии без ЛК
+     (отчёт высоты и тайминги 1:1, без доп. циклов)
+   - модуль: fitWheel без лишних перезаписей стилей и с
+     повторной подгонкой после загрузки шрифтов
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
-   Мод: wof — «Колесо подарков» (блок + форма Тильды).
    ============================================================ */
 (function () {
   'use strict';
@@ -131,7 +138,14 @@
     frameTimer = setTimeout(buildPreview, 250);
   }
 
-  /* ============ превью: виртуальный экран + зум ============ */
+  /* ================================================================
+     ПРЕВЬЮ: виртуальный экран + зум.
+     Механика 1:1 из рабочей версии без ЛК (v1.8): те же тайминги
+     отчёта высоты (load +100/+500 мс), тот же запасной замер из
+     родителя (+120/+600 мс), тот же паддинг 16 — и в превью,
+     и в «В новой вкладке».
+     ================================================================ */
+
   var PV_WIDTHS = [390, 768, 1024, 1360, 1440, 1680, 1920];
   var pv = { vw: 1360, zoom: 'fit' };
   try {
@@ -143,7 +157,7 @@
   } catch (e) {}
   function savePv() { try { localStorage.setItem('cxb:pv', JSON.stringify(pv)); } catch (e) {} }
 
-  var pvH = 640;
+  var pvH = 640; /* высота контента виртуального экрана (приходит из iframe) */
 
   function zoomK() {
     if (pv.zoom === 'fit') {
@@ -175,12 +189,13 @@
     return m.demo ? m.demo.call(m, state) : '<p style="color:#8C97A5">Демо не задано</p>';
   }
 
+  /* --- сборка HTML превью-страницы (iframe / вкладка) — как в v1.8 --- */
   function buildPreviewHTML(body, o) {
     o = o || {};
     var pad = (o.pad != null) ? o.pad : 16;
     var isTab = !!o.isTab;
 
-    /* ловец ошибок (ResizeObserver-loop — безобидная, не показываем) */
+    /* Ловец ошибок: ResizeObserver-loop — безобидная ошибка браузера, не показываем */
     var errTrap =
       '<script>window.addEventListener("error",function(e){' +
       'var msg=(e&&e.message)?e.message:String(e);' +
@@ -191,22 +206,21 @@
       'b.textContent="Ошибка в коде мода: "+msg;' +
       '(document.body||document.documentElement).appendChild(b);});' + S_CLOSE;
 
-    /* отчёт высоты контента родителю (rAF-защита от шторма) */
+    /* Для iframe: отчёт высоты контента родителю (rAF-защита от шторма).
+       Для вкладки: ничего не нужно — живая страница, скролл браузера. */
     var report = isTab ? '' :
       '<script>(function(){' +
-      'var raf=0,obs=false;' +
+      'var raf=0;' +
       'function report(){raf=0;try{' +
       'var c=document.querySelector(".cxd-col");if(!c)return;' +
       'var h=Math.ceil(c.getBoundingClientRect().height)+' + (pad * 2 + 2) + ';' +
       'window.parent.postMessage({cxbPrevInfo:{h:h}},"*");' +
       '}catch(e){}}' +
       'function schedule(){if(raf)return;raf=(window.requestAnimationFrame||function(f){setTimeout(f,16)})(report);}' +
-      'function watch(){if(obs)return;var c=document.querySelector(".cxd-col");if(!c||!window.ResizeObserver)return;obs=true;try{new ResizeObserver(schedule).observe(c);}catch(e){}}' +
-      'function start(){schedule();watch();setTimeout(schedule,100);setTimeout(schedule,500);setTimeout(schedule,1200);}' +
-      'window.addEventListener("load",start);' +
+      'window.addEventListener("load",function(){schedule();setTimeout(schedule,100);setTimeout(schedule,500);});' +
       'window.addEventListener("resize",schedule);' +
-      'if(document.readyState!=="loading"){start();}else{document.addEventListener("DOMContentLoaded",start);}' +
-      'watch();' +
+      'if(window.ResizeObserver){try{new ResizeObserver(schedule).observe(document.querySelector(".cxd-col"));}catch(e){}}' +
+      'schedule();' +
       '})();' + S_CLOSE;
 
     var css =
@@ -225,11 +239,11 @@
   }
 
   function buildPreview() {
-    pvH = 640;
+    pvH = 640; /* пока не придёт точный отчёт из iframe */
     el.frame.srcdoc = buildPreviewHTML(currentDemoBody(), { pad: 16 });
     applyPv();
   }
-
+  /* запасной замер высоты напрямую (если postMessage недоступен) */
   function readHeight() {
     try {
       var c = el.frame.contentDocument.querySelector('.cxd-col');
@@ -237,9 +251,10 @@
     } catch (e) {}
   }
 
+  /* --- отдельная вкладка: живая страница под реальный размер окна --- */
   function openTab() {
     if (!activeId) return;
-    var html = buildPreviewHTML(currentDemoBody(), { isTab: true, pad: 0 });
+    var html = buildPreviewHTML(currentDemoBody(), { isTab: true });
     var url = '';
     try {
       var blob = new Blob([html], { type: 'text/html' });
@@ -247,7 +262,7 @@
     } catch (e) {}
     if (!url) { showToast('Не удалось создать превью'); return; }
     var w = window.open(url, '_blank');
-    if (!w) showToast('Разрешите всплывающие окна для этой страницы');
+    if (!w) { showToast('Разрешите всплывающие окна для этой страницы'); }
     setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
   }
 
@@ -381,7 +396,7 @@
       setTimeout(readHeight, 600);
     });
     bindOnce(el.vw, 'change', function () {
-      pv.vw = +this.value; savePv(); applyPv();
+      pv.vw = +this.value; savePv(); applyPv(); /* ширина iframe меняется на лету, демо не пересобирается */
     });
     bindOnce(el.zoom, 'click', function (ev) {
       var b = ev.target && ev.target.closest ? ev.target.closest('button') : null;
@@ -468,17 +483,14 @@
     return many;
   }
 
-  var DEFAULT_SECTORS = [
-    { icon: 'tape',   label: 'Замер + смета',                prize: 'Замер + смета',                sub: 'Замерщик приедет в удобное время. Смета — бесплатно и ни к чему не обязывает.' },
-    { icon: 'shield', label: 'Гарантия 5 лет вместо 3',      prize: 'Гарантия 5 лет вместо 3',      sub: 'Расширенная гарантия на все работы будет прописана в договоре.' },
-    { icon: 'truck',  label: 'Вывоз мусора',                 prize: 'Вывоз мусора — в подарок',     sub: 'Вывезем строительный мусор после ремонта за наш счёт.' },
-    { icon: 'dolly',  label: 'Доставка и подъём материалов', prize: 'Доставка и подъём материалов', sub: 'Привезём материалы и поднимем их в квартиру — бесплатно.' },
-    { icon: 'drill',  label: 'Демонтаж в подарок',           prize: 'Демонтаж — в подарок',         sub: 'Демонтажные работы — бесплатно при заказе ремонта.' },
-    { icon: 'edit',   label: 'Дизайн-проект бесплатно',      prize: 'Дизайн-проект бесплатно',      sub: 'Подарок закрепляется за вами на 3 дня и будет прописан в смете.' }
-  ];
-  var DEFAULT_SECTORS_TEXT = DEFAULT_SECTORS.map(function (s) {
-    return s.icon + ' | ' + s.label + ' | ' + s.prize + ' | ' + s.sub;
-  }).join('\n');
+  var DEFAULT_SECTORS_TEXT = [
+    'tape | Замер + смета | Замер + смета | Замерщик приедет в удобное время. Смета — бесплатно и ни к чему не обязывает.',
+    'shield | Гарантия 5 лет вместо 3 | Гарантия 5 лет вместо 3 | Расширенная гарантия на все работы будет прописана в договоре.',
+    'truck | Вывоз мусора | Вывоз мусора — в подарок | Вывезем строительный мусор после ремонта за наш счёт.',
+    'dolly | Доставка и подъём материалов | Доставка и подъём материалов | Привезём материалы и поднимем их в квартиру — бесплатно.',
+    'drill | Демонтаж в подарок | Демонтаж — в подарок | Демонтажные работы — бесплатно при заказе ремонта.',
+    'edit | Дизайн-проект бесплатно | Дизайн-проект бесплатно | Подарок закрепляется за вами на 3 дня и будет прописан в смете.'
+  ].join('\n');
 
   function parseSectors(txt) {
     var def = [
@@ -515,7 +527,7 @@
       .replace(/\\/g, '')
       .replace(/`/g, String.fromCharCode(8216))
       .replace(/\$\{/g, '$ ')
-      .replace(/<\/script/gi, '')
+      .replace(new RegExp('</scr' + 'ipt', 'gi'), '')
       .replace(/<!--/g, '')
       + '`';
   }
@@ -543,7 +555,7 @@
       cardBg: hex(v.cardBg) || '#ffffff',
       wheelSize: num(v.wheelSize, 520, 280, 640),
       spinDuration: num(v.spinDuration, 6, 2, 12),
-      cardMaxWidth: num(v.cardMaxWidth, 1120, 600, 1920),
+      cardMaxWidth: num(v.cardMaxWidth, 1360, 600, 1920),
       cardPad: num(v.cardPad, 48, 20, 90),
       gapCols: num(v.gapCols, 48, 20, 120),
       rimWidth: num(v.rimWidth, 10, 2, 24),
@@ -703,7 +715,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
 .wof-sec-in{position:absolute;left:50%;top:50%;width:200px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;transform:translate(-50%,calc(-50% - 197px)) rotate(calc(var(--a,0deg) * -1));transition:transform var(--wspin) cubic-bezier(.14,.65,.07,1)}
 .wof-ico{width:64px;height:64px;background:${o.cardBg};border:1px solid #ededea;border-radius:16px;padding:17px;box-shadow:0 8px 18px rgba(23,24,26,.08);color:var(--wink)}
 .wof-lbl{font-size:16px;font-weight:600;line-height:1.3}
-/* ---- адаптив: планшет ---- */
+/* ---- адаптив размеров шрифтов: планшет ---- */
 @media (max-width:1220px){
 .wof-card{grid-template-columns:1fr}
 .wof-right{order:2;margin-top:8px}
@@ -714,7 +726,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
 .wof-right{justify-content:center}
  ${o.stretchLeft ? '.wof-left{display:flex;flex-direction:column}\n.wof-giftbox{flex:1 1 auto}\n' : ''}
 }
-/* ---- адаптив: смартфон ---- */
+/* ---- адаптив размеров шрифтов: смартфон ---- */
 @media (max-width:560px){
 .wof-card{padding:18px 14px;border-radius:${o.cardRadiusSm}px}
 .wof-form .wof-input,.wof-form .wof-btn{flex:1 1 100%;width:100%}
@@ -754,6 +766,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
     h += '</div>';
     h += '<div class="wof-right">';
     if (o.showBadge) {
+      /* число и слово подставляем сразу в HTML — видны даже до запуска JS */
       var cnt = Math.max(0, Math.round(o.giftsTotal || 0));
       var wd = pluralRu(cnt, 'подарок', 'подарка', 'подарков');
       h += '<div class="wof-wheelhead"><div class="wof-badge"><span class="wof-badge-ic" data-ic="gift"></span>' +
@@ -869,13 +882,19 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       }
     }
 
-    /* колесо 560px масштабируется под реальную ширину контейнера */
+    /* колесо 560px масштабируется под реальную ширину контейнера.
+       Перезаписываем стили только при изменении ширины — чтобы не
+       дёргать лишними пересчётами высоты превью конструктора. */
+    var lastFitW = 0;
     function fitWheel() {
       var box = q('#wofWheelbox');
       var sc = q('#wofScale');
       if (!box || !sc) return;
       var w = box.clientWidth;
       if (!w || w < 40) w = Math.min(CFG.wheelSize, 560);
+      w = Math.round(w);
+      if (w === lastFitW && box.style.height) return;
+      lastFitW = w;
       sc.style.transform = 'scale(' + (w / 560) + ')';
       box.style.height = w + 'px';
     }
@@ -1066,8 +1085,14 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         clearTimeout(rt);
         rt = setTimeout(fitWheel, 150);
       });
+      /* повторная подгонка после загрузки шрифтов (иначе замер ширины
+         мог пройти до подгрузки и колесо оставалось не в масштабе) */
+      if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+        document.fonts.ready.then(function () { fitWheel(); });
+      }
       setTimeout(fitWheel, 60);
-      setTimeout(fitWheel, 400);
+      setTimeout(fitWheel, 300);
+      setTimeout(fitWheel, 900);
 
       log('Готово. Секторов:', CFG.sectors.length);
       return true;
@@ -1153,7 +1178,8 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
 
   function wofDemo(v) {
     /* честное превью: реальный сгенерированный код */
-    return wofGenerate(v);
+    return wofGenerate(v) +
+      '<p class="cxd-note">Превью — настоящий сгенерированный код. Ширина превью равна выбранному виртуальному экрану, медиазапросы мода (≤560 / ≤1220 / >1220) включаются как на реальном устройстве.</p>';
   }
 
   CXB.register({
@@ -1172,8 +1198,7 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       { title: 'Сектора колеса', items: [
         { key: 'sectors', type: 'textarea', label: 'Призы — по одному в строке', rows: 7, def: DEFAULT_SECTORS_TEXT,
           hint: 'Формат: <code>иконка | подпись на колесе | название приза | описание</code>. Иконки: tape, shield, truck, dolly, drill, edit, gift, phone, check, lock. Иконку, название и описание можно не указывать.' },
-        { key: 'spinDuration', type: 'range', label: 'Длительность вращения', unit: 'с', min: 2, max: 12, step: 1, def: 6 },
-        { key: 'showDots', type: 'toggle', label: 'Точки на ободе', def: true, newRow: true }
+        { key: 'spinDuration', type: 'range', label: 'Длительность вращения', unit: 'с', min: 2, max: 12, step: 1, def: 6 }
       ]},
       { title: 'Цвета', items: [
         { key: 'colorMain',      type: 'color', label: 'Акцент', def: '#0EA800' },
@@ -1185,65 +1210,10 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         { key: 'blockBg',        type: 'color', label: 'Фон блока', def: '#F2F3EC' },
         { key: 'cardBg',         type: 'color', label: 'Фон карточки', def: '#FFFFFF' }
       ]},
-      { title: 'Размеры и раскладка', items: [
-        { key: 'cardMaxWidth', type: 'number', label: 'Ширина карточки (px)', def: 1120 },
-        { key: 'wheelSize',    type: 'range',  label: 'Размер колеса', unit: 'px', min: 280, max: 640, step: 2, def: 520 },
-        { key: 'cardPad',      type: 'range',  label: 'Отступ внутри карточки', unit: 'px', min: 20, max: 90, def: 48 },
-        { key: 'gapCols',      type: 'range',  label: 'Расстояние между колонками', unit: 'px', min: 20, max: 120, def: 48 },
-        { key: 'rimWidth',     type: 'range',  label: 'Толщина обода', unit: 'px', min: 2, max: 24, def: 10 },
-        { key: 'cardRadius',   type: 'range',  label: 'Скругление карточки (ПК)', unit: 'px', min: 0, max: 60, def: 24 },
-        { key: 'cardRadiusSm', type: 'range',  label: 'Скругление карточки (смартфон)', unit: 'px', min: 0, max: 60, def: 18 },
-        { key: 'colLeft',      type: 'range',  label: 'Левая колонка на ПК', unit: '%', min: 30, max: 70, def: 45, newRow: true, hint: 'Остальное — правая колонка с колесом' },
-        { key: 'stretchLeft',  type: 'toggle', label: 'Растягивать левую колонку по высоте', def: true, newRow: true }
-      ]},
-      { title: 'Шрифты', items: [
-        { key: 'fontHead', type: 'select', label: 'Заголовки и кнопки', options: FONT_OPTS, def: 'Oswald' },
-        { key: 'fontText', type: 'select', label: 'Основной текст', options: FONT_OPTS, def: 'Inter' }
-      ]},
-      { title: 'Размеры шрифтов', items: [
-        { key: 'fsTitle',    type: 'range', label: 'Главный заголовок · ПК', unit: 'px', min: 20, max: 80, def: 44 },
-        { key: 'fsTitleMd',  type: 'range', label: 'Главный заголовок · планшет', unit: 'px', min: 20, max: 80, def: 36 },
-        { key: 'fsTitleSm',  type: 'range', label: 'Главный заголовок · смартфон', unit: 'px', min: 16, max: 80, def: 27 },
-        { key: 'fsOnly',     type: 'range', label: '«Только до…» · ПК', unit: 'px', min: 10, max: 40, def: 18 },
-        { key: 'fsOnlySm',   type: 'range', label: '«Только до…» · смартфон', unit: 'px', min: 10, max: 40, def: 15 },
-        { key: 'fsPrize',    type: 'range', label: 'Название приза · ПК', unit: 'px', min: 14, max: 60, def: 26 },
-        { key: 'fsPrizeSm',  type: 'range', label: 'Название приза · смартфон', unit: 'px', min: 12, max: 60, def: 20 },
-        { key: 'fsText',     type: 'range', label: 'Основной текст · ПК', unit: 'px', min: 11, max: 30, def: 16 },
-        { key: 'fsTextSm',   type: 'range', label: 'Основной текст · смартфон', unit: 'px', min: 10, max: 30, def: 14 }
-      ]},
-      { title: 'Счётчик подарков', items: [
-        { key: 'showBadge',    type: 'toggle', label: 'Показывать счётчик над колесом', def: true },
-        { key: 'giftsTotal',   type: 'number', label: 'Сколько всего подарков', def: 50 },
-        { key: 'counterLabel', type: 'text',   label: 'Подпись счётчика', def: 'Осталось' }
-      ]},
-      { title: 'Тексты', items: [
-        { key: 'eyebrow',          type: 'text',     label: 'Надстрочник над заголовком', def: 'Подарки клиентам' },
-        { key: 'onlyBefore',       type: 'text',     label: '«Только до» — текст', def: 'Только до' },
-        { key: 'onlyAfter',        type: 'text',     label: '«Только до» — дата (зелёным)', def: '31 декабря' },
-        { key: 'titleHtml',        type: 'textarea', rows: 3, label: 'Главный заголовок (можно <mark>…</mark> для зелёной плашки)', def: 'Крутите колесо и получите <mark>подарок</mark> к ремонту' },
-        { key: 'note',             type: 'textarea', rows: 2, label: 'Подзаголовок', def: 'Один оборот на человека. Крутите — выпадет подарок, а мы запишем его за вами.' },
-        { key: 'giftLabel',        type: 'text',     label: 'Подпись в блоке приза', def: 'Ваш подарок' },
-        { key: 'prizeDefault',     type: 'textarea', rows: 2, label: 'Название приза до вращения', def: 'Здесь появится ваш приз' },
-        { key: 'prizeSubDefault',  type: 'textarea', rows: 2, label: 'Описание приза до вращения', def: 'Крутите колесо, чтобы узнать, что вам выпадет.' },
-        { key: 'spinBtn',          type: 'text',     label: 'Кнопка в центре колеса', def: 'Крутить' },
-        { key: 'lockHint',         type: 'text',     label: 'Подсказка под формой (пока не крутанули)', def: 'Форма откроется после вращения колеса' },
-        { key: 'phonePlaceholder', type: 'text',     label: 'Подсказка в поле телефона', def: '+7 (___) ___-__-__' },
-        { key: 'submitText',       type: 'text',     label: 'Кнопка отправки', def: 'Получить' },
-        { key: 'errorText',        type: 'text',     label: 'Текст ошибки', def: 'Введите корректный номер телефона' },
-        { key: 'successTitle',     type: 'text',     label: 'Заголовок успеха', def: 'Заявка принята!' },
-        { key: 'successText',      type: 'textarea', rows: 2, label: 'Текст успеха', def: 'Перезвоним в течение 15 минут в рабочее время и запишем подарок за вами.' }
-      ]},
-      { title: 'Отправка в форму Тильды', items: [
-        { key: 'useTildaForm',       type: 'toggle', label: 'Отправлять через скрытую форму Тильды', def: true },
-        { key: 'tildaFormSelector',  type: 'text',   label: 'CSS-класс формы', def: '.uc-coleso', hint: 'Класс вешается на БЛОК с формой, не на саму форму.' }
-      ]},
-      { title: 'Служебное', items: [
-        { key: 'keyPrefix', type: 'text',   label: 'Префикс ключей localStorage', def: 'wof_' },
-        { key: 'debug',     type: 'toggle', label: 'debug — логи в консоли', def: false }
-      ]}
-    ],
-    demo: wofDemo,
-    generate: wofGenerate
-  });
-
-})();
+      { title: 'Блок и карточка', items: [
+        { key: 'cardMaxWidth', type: 'range', label: 'Ширина карточки', unit: 'px', min: 600, max: 1920, step: 10, def: 1360,
+          hint: 'Исходный размер: 1540px, карточка всегда по центру страницы.' },
+        { key: 'cardRadius',   type: 'range', label: 'Скругление карточки', unit: 'px', min: 0, max: 60, def: 24 },
+        { key: 'cardPad',      type: 'range', label: 'Внутренние отступы карточки', unit: 'px', min: 20, max: 90, def: 48,
+          hint: 'Поля внутри карточки со всех сторон (верх/низ/лево/право)' },
+        { key: 'gapCols',      type: 'range', label: 'Рас
