@@ -1,26 +1,23 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.1
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.2
    Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.1" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.2" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Изменения v2.1:
-   - ФИКС (критический): обработчики панели настроек не
-     привязывались ни в v1.9, ни в v2.0 — флаг инициализации
-     __cxBound конфликтовал с флагом bindOnce, и bindOnce
-     молча выходил. Из-за этого превью не реагировало на
-     параметры. Флаги разведены (__cxInit / __cxBound).
-   - Наблюдатель за DOM теперь постоянный: если ЛК заменяет
-     разметку (сохранение, переход между страницами), новый
-     экземпляр инициализируется автоматически.
-   - Скрытие формы Тильды в сгенерированном коде — три слоя:
-     CSS первой операцией скрипта; немедленный JS-проход
-     (прячет и .t-rec); JS-проход с наблюдателем ~8 сек
-     (форма может отрисовываться позже скрипта).
-   Ядро превью — 1:1 из рабочей версии без ЛК (v1.8):
-   виртуальный экран 390–1920, зум Вписать/50/75/100,
-   «В новой вкладке», ловец ошибок, авто-высота, те же тайминги.
+   Изменения v2.2:
+   - порядок групп панели по эталону: 1. Блок и карточка,
+     2. Цвета, 3. Колесо, 4. Шрифты, 5. Размеры шрифтов,
+     6. Тексты, 7. Сектора колеса, 8. Счётчик подарков,
+     9. Отправка в форму Тильды, 10. Служебное
+     (первая группа открывается по умолчанию)
+   - скрытие формы Тильды усилено в сгенерированном коде:
+     авточинка класса, вписанного с точкой (.uc-coleso → uc-coleso);
+     наблюдатель до 8 сек ловит формы, отрисованные позже скрипта;
+     debug-логи: найдена/скрыта/не найдена
+   Ядро v2.1: виртуальный экран 390–1920, зум, «В новой вкладке»,
+   ловец ошибок, авто-высота; устойчивость к ЛК (grab в момент
+   init, MutationObserver, флаги __cxInit/__cxBound разведены).
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -375,8 +372,7 @@
     el = e;
 
     /* этот экземпляр разметки уже инициализирован.
-       ФЛАГ ДРУГОЙ (__cxInit), не тот, что в bindOnce —
-       в v2.0 они совпадали, и обработчики не привязывались */
+       Флаг другой (__cxInit), не тот, что в bindOnce (__cxBound) */
     if (el.settings.__cxInit) return true;
     el.settings.__cxInit = true;
 
@@ -435,11 +431,10 @@
     var ok = init();
     /* наблюдатель держим ВСЕГДА: ЛК может заменить разметку
        (сохранение, переход между страницами) — свежий экземпляр
-       разметки инициализируется автоматически, флагов на новых
-       элементах нет, двойных обработчиков не будет */
+       разметки инициализируется автоматически */
     var mo = new MutationObserver(function () { init(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
-    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.1)');
+    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.2)');
     else console.info('[DEV MODS] Разметки ещё нет — инициализация по появлению блока');
   }
 
@@ -841,21 +836,72 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
     function q(sel) { return root ? root.querySelector(sel) : null; }
 
     /* ---------- скрытие формы Тильды (JS-слой) ----------
-       CSS уже прячет форму; JS нужен, чтобы спрятать и блок-родитель
-       .t-rec (для браузеров без :has()) и поймать формы, которые
-       Тильда отрисовывает ПОЗЖЕ скрипта — поэтому вызываем повторно. */
+       CSS уже прячет форму. JS дополнительно:
+       1) прячет блок-родитель .t-rec (для браузеров без :has());
+       2) чинит частую ошибку — класс, вписанный в настройках
+          блока Тильды С ТОЧКОЙ (.uc-coleso): в DOM такой класс
+          содержит точку в имени, селектор .uc-coleso его не
+          находит. Убираем точку из имени класса;
+       3) работает через наблюдатель: Тильда может отрисовать
+          форму позже, чем выполнится наш скрипт. */
+    var hideWarned = false;
     function hideTildaForm() {
       if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
-      var form = document.querySelector(CFG.tildaFormSelector);
-      if (!form) return;
+      var sel = CFG.tildaFormSelector;
+      var name = sel.charAt(0) === '.' ? sel.slice(1) : sel;
+      var form = null;
+      try { form = document.querySelector(sel); } catch (e) {}
+      if (!form) {
+        var cand = null;
+        try { cand = document.querySelectorAll('[class*="' + name + '"]'); } catch (e) {}
+        if (cand) {
+          for (var i = 0; i < cand.length; i++) {
+            var cl = cand[i].classList;
+            var hasDot = false;
+            for (var j = 0; j < cl.length; j++) {
+              if (cl[j].charAt(0) === '.' && cl[j].slice(1) === name) hasDot = true;
+            }
+            if (hasDot) {
+              var nv = '';
+              for (var k = 0; k < cl.length; k++) {
+                if (k) nv += ' ';
+                nv += (cl[k].charAt(0) === '.') ? cl[k].slice(1) : cl[k];
+              }
+              cand[i].setAttribute('class', nv);
+              log('Автофикс: класс был вписан с точкой, исправлено на', nv);
+              try { form = document.querySelector(sel); } catch (e) {}
+              break;
+            }
+          }
+        }
+      }
+      if (!form) {
+        if (!hideWarned) {
+          hideWarned = true;
+          if (CFG.debug) log('Форма не найдена на странице:', sel, '- проверь CSS-класс блока формы и публикацию');
+        }
+        return;
+      }
       if (form.style.display !== 'none') {
         form.style.display = 'none';
-        log('Форма скрыта (JS):', CFG.tildaFormSelector);
+        log('Форма скрыта (JS):', sel);
       }
       if (form.closest) {
         var rec = form.closest('.t-rec');
         if (rec && rec.style.display !== 'none') rec.style.display = 'none';
       }
+    }
+
+    /* наблюдатель скрытия — запускается всегда, независимо от того,
+       как прошла инициализация колеса */
+    function startHideWatch() {
+      if (!CFG.useTildaForm || !CFG.tildaFormSelector) return;
+      hideTildaForm();
+      try {
+        var mo = new MutationObserver(function () { hideTildaForm(); });
+        mo.observe(document.documentElement, { childList: true, subtree: true });
+        setTimeout(function () { mo.disconnect(); }, 8000);
+      } catch (e) {}
     }
 
     function paintIcons() {
@@ -1125,16 +1171,15 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       setTimeout(fitWheel, 300);
       setTimeout(fitWheel, 900);
 
-      log('Готово. Секторов:', CFG.sectors.length);
+      log('Готово. Секторов:', CFG.sectors.length, 'Стиль в head:', !!document.getElementById('wofStyle'));
       return true;
     }
 
     function boot() {
-      hideTildaForm();
+      startHideWatch();
       if (init()) return;
       var tries = 0;
       var mo = new MutationObserver(function () {
-        hideTildaForm();
         if (init() || ++tries > 60) mo.disconnect();
       });
       mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -1223,8 +1268,8 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       '  if (anchor && anchor.parentNode) { anchor.parentNode.insertBefore(root, anchor); }' + NL +
       '  else { (document.body || document.documentElement).appendChild(root); }' + NL +
       '  root.innerHTML = WOF_HTML;' + NL + NL +
-      /* СЛОЙ 3 внутри WOF_LOGIC: наблюдатель добивает формы,
-         отрисованные Тильдой позже скрипта */
+      /* СЛОЙ 3 внутри WOF_LOGIC: автопочинка класса с точкой +
+         наблюдатель добивает формы, отрисованные позже скрипта */
       '  try { WOF_LOGIC(); } catch (e) { if (CFG.debug) console.log("[Колесо] ошибка:", e); }' + NL +
       '})();' + NL +
       S_CLOSE;
@@ -1244,26 +1289,11 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
       hint: 'Форма Тильды должна быть на той же странице: телефон подставляется в её поле и нажимается кнопка отправки — заявка придёт как обычная лид-форма (уведомления, CRM). Форма на странице скрыта CSS-ом мода.',
       steps: [
         { badge: 'КОД',   text: 'Нажмите «Сгенерировать код» выше и вставьте код <b>целиком</b> в блок Т123 (HTML-код) на нужной странице. Колесо появится на месте кода.' },
-        { badge: 'ФОРМА', text: 'Добавьте на эту же страницу форму Тильды (например, BF502N) и задайте её блоку CSS-класс (Настройки блока → Дополнительно → CSS-класс блока):', chip: 'uc-coleso' },
-        { badge: 'ТЕСТ',  text: 'Опубликуйте страницу. Крутите колесо — после выпадения приза откроется поле телефона. Для отладки включите «debug» в группе «Служебное» — логи появятся в консоли браузера.' }
+        { badge: 'ФОРМА', text: 'Добавьте на эту же страницу форму Тильды (например, BF502N). В настройках блока формы: Ещё → Настройки блока → Дополнительно → CSS-класс блока — впишите класс <b>без точки в начале</b>:', chip: 'uc-coleso' },
+        { badge: 'ТЕСТ',  text: 'Опубликуйте страницу и проверяйте на опубликованном адресе (в редакторе скрипты не работают). Для отладки включите «debug» в группе «Служебное», перегенерируйте код — в консоли браузера появятся строки [Колесо].' }
       ]
     },
     fields: [
-      { title: 'Сектора колеса', items: [
-        { key: 'sectors', type: 'textarea', label: 'Призы — по одному в строке', rows: 7, def: DEFAULT_SECTORS_TEXT,
-          hint: 'Формат: <code>иконка | подпись на колесе | название приза | описание</code>. Иконки: tape, shield, truck, dolly, drill, edit, gift, phone, check, lock. Иконку, название и описание можно не указывать.' },
-        { key: 'spinDuration', type: 'range', label: 'Длительность вращения', unit: 'с', min: 2, max: 12, step: 1, def: 6 }
-      ]},
-      { title: 'Цвета', items: [
-        { key: 'colorMain',      type: 'color', label: 'Акцент', def: '#0EA800' },
-        { key: 'colorMainDark',  type: 'color', label: 'Акцент тёмный', def: '#0C8F00' },
-        { key: 'colorInk',       type: 'color', label: 'Текст', def: '#171A1A' },
-        { key: 'colorGray',      type: 'color', label: 'Второстепенный текст', def: '#6F7669' },
-        { key: 'colorLine',      type: 'color', label: 'Линии, границы полей', def: '#E6E9DC' },
-        { key: 'colorRim',       type: 'color', label: 'Обод колеса', def: '#171A1A' },
-        { key: 'blockBg',        type: 'color', label: 'Фон блока', def: '#F2F3EC' },
-        { key: 'cardBg',         type: 'color', label: 'Фон карточки', def: '#FFFFFF' }
-      ]},
       { title: 'Блок и карточка', items: [
         { key: 'cardMaxWidth', type: 'range', label: 'Ширина карточки', unit: 'px', min: 600, max: 1920, step: 10, def: 1360,
           hint: 'Исходный размер: 1540px, карточка всегда по центру страницы.' },
@@ -1276,6 +1306,16 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
           hint: 'Работает на экранах шире 1220px. По умолчанию: 45% — текст и форма, 55% — колесо. Превью показывает настоящую раскладку (виртуальный экран = реальная ширина).' },
         { key: 'stretchLeft',  type: 'toggle', label: 'Левая колонка до низа карточки (ПК)', def: true },
         { key: 'cardRadiusSm', type: 'range', label: 'Скругление карточки на смартфонах', unit: 'px', min: 0, max: 60, def: 18, newRow: true }
+      ]},
+      { title: 'Цвета', items: [
+        { key: 'colorMain',      type: 'color', label: 'Акцент', def: '#0EA800' },
+        { key: 'colorMainDark',  type: 'color', label: 'Акцент тёмный', def: '#0C8F00' },
+        { key: 'colorInk',       type: 'color', label: 'Текст', def: '#171A1A' },
+        { key: 'colorGray',      type: 'color', label: 'Второстепенный текст', def: '#6F7669' },
+        { key: 'colorLine',      type: 'color', label: 'Линии, границы полей', def: '#E6E9DC' },
+        { key: 'colorRim',       type: 'color', label: 'Обод колеса', def: '#171A1A' },
+        { key: 'blockBg',        type: 'color', label: 'Фон блока', def: '#F2F3EC' },
+        { key: 'cardBg',         type: 'color', label: 'Фон карточки', def: '#FFFFFF' }
       ]},
       { title: 'Колесо', items: [
         { key: 'wheelSize', type: 'range',  label: 'Размер колеса', unit: 'px', min: 280, max: 640, step: 2, def: 520 },
@@ -1297,11 +1337,6 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         { key: 'fsText',     type: 'range', label: 'Основной текст · ПК', unit: 'px', min: 11, max: 30, def: 16 },
         { key: 'fsTextSm',   type: 'range', label: 'Основной текст · смартфон', unit: 'px', min: 10, max: 30, def: 14 }
       ]},
-      { title: 'Счётчик подарков', items: [
-        { key: 'showBadge',    type: 'toggle', label: 'Показывать счётчик над колесом', def: true },
-        { key: 'giftsTotal',   type: 'number', label: 'Сколько всего подарков', def: 50 },
-        { key: 'counterLabel', type: 'text',   label: 'Подпись счётчика', def: 'Осталось' }
-      ]},
       { title: 'Тексты', items: [
         { key: 'eyebrow',          type: 'text',     label: 'Надстрочник над заголовком', def: 'Подарки клиентам' },
         { key: 'onlyBefore',       type: 'text',     label: '«Только до» — текст', def: 'Только до' },
@@ -1319,9 +1354,19 @@ gap:clamp(24px,4vw,${o.gapCols}px);align-items:center}
         { key: 'successTitle',     type: 'text',     label: 'Заголовок успеха', def: 'Заявка принята!' },
         { key: 'successText',      type: 'textarea', rows: 2, label: 'Текст успеха', def: 'Перезвоним в течение 15 минут в рабочее время и запишем подарок за вами.' }
       ]},
+      { title: 'Сектора колеса', items: [
+        { key: 'sectors', type: 'textarea', label: 'Призы — по одному в строке', rows: 7, def: DEFAULT_SECTORS_TEXT,
+          hint: 'Формат: <code>иконка | подпись на колесе | название приза | описание</code>. Иконки: tape, shield, truck, dolly, drill, edit, gift, phone, check, lock. Иконку, название и описание можно не указывать.' },
+        { key: 'spinDuration', type: 'range', label: 'Длительность вращения', unit: 'с', min: 2, max: 12, step: 1, def: 6 }
+      ]},
+      { title: 'Счётчик подарков', items: [
+        { key: 'showBadge',    type: 'toggle', label: 'Показывать счётчик над колесом', def: true },
+        { key: 'giftsTotal',   type: 'number', label: 'Сколько всего подарков', def: 50 },
+        { key: 'counterLabel', type: 'text',   label: 'Подпись счётчика', def: 'Осталось' }
+      ]},
       { title: 'Отправка в форму Тильды', items: [
         { key: 'useTildaForm',       type: 'toggle', label: 'Отправлять через скрытую форму Тильды', def: true },
-        { key: 'tildaFormSelector',  type: 'text',   label: 'CSS-класс формы', def: '.uc-coleso', hint: 'Класс вешается на БЛОК с формой, не на саму форму.' }
+        { key: 'tildaFormSelector',  type: 'text',   label: 'CSS-класс формы', def: '.uc-coleso', hint: 'Это селектор для CSS. Сам класс в настройках блока Тильды вписывается БЕЗ точки: uc-coleso. Класс вешается на БЛОК с формой.' }
       ]},
       { title: 'Служебное', items: [
         { key: 'keyPrefix', type: 'text',   label: 'Префикс ключей localStorage', def: 'wof_' },
