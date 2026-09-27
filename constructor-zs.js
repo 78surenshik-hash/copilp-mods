@@ -1,0 +1,1090 @@
+/* ============================================================
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.0
+   Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
+   Подключение (T123):
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.0" defer></script>
+   Внешний файл не переобрабатывается Тильдой и ЛК —
+   это и есть решение проблемы с ЛК.
+   Ядро: каркас v1.7 (липкое превью, открепление, авто-высота,
+   ловец ошибок) + устойчивость к динамической подгрузке ЛК
+   (grab в момент init, MutationObserver, bindOnce).
+   Мод: zero-slider v3.0 — слайдеры для Zero Block на Swiper 8.4.7,
+   поддержка нескольких слайдеров на странице.
+   Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
+   тег — S_CLOSE, защита от повторного запуска.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  var NL = String.fromCharCode(10);
+  var S_CLOSE = '</scr' + 'ipt>';
+
+  var mods = {};
+  var activeId = null;
+  var state = {};
+  var frameTimer = null;
+  var toastTimer = null;
+  var currentCode = '';
+  var el = null;
+
+  var wantMod = null;
+  try { wantMod = new URLSearchParams(window.location.search).get('mod'); } catch (e) {}
+
+  /* ================= утилиты ================= */
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function num(v, def, min, max) {
+    var n = parseFloat(v);
+    if (isNaN(n)) n = def;
+    return Math.max(min, Math.min(max, n));
+  }
+  function hex(v) {
+    v = String(v || '').trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(v)) return v;
+    if (/^#[0-9a-f]{3}$/.test(v)) return '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+    return null;
+  }
+
+  function showToast(msg) {
+    var t = (el && el.toast) ? el.toast : document.getElementById('cx-toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.add('cx-show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('cx-show'); }, 1800);
+  }
+
+  function copyToClipboard(text, msg) {
+    function ok() { showToast(msg || 'Скопировано'); }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); ok(); } catch (e) { showToast('Не удалось скопировать'); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, fallback);
+    } else fallback();
+  }
+
+  window.CXB = {
+    utils: { esc: esc, num: num, hex: hex },
+    register: function (mod) { mods[mod.id] = mod; }
+  };
+
+  function defaultsOf(id) {
+    var d = {};
+    mods[id].fields.forEach(function (g) {
+      g.items.forEach(function (f) { d[f.key] = f.def; });
+    });
+    return d;
+  }
+  function findField(key) {
+    var m = mods[activeId];
+    if (!m) return null;
+    for (var i = 0; i < m.fields.length; i++) {
+      var items = m.fields[i].items;
+      for (var j = 0; j < items.length; j++) if (items[j].key === key) return items[j];
+    }
+    return null;
+  }
+
+  /* элементы ищем в момент инициализации — разметку может вставить ЛК */
+  function grab() {
+    return {
+      settings: document.getElementById('cx-settings'),
+      frame:    document.getElementById('cx-frame'),
+      frameBox: document.getElementById('cx-frame-box'),
+      pin:      document.getElementById('cx-pin'),
+      connect:  document.getElementById('cx-connect'),
+      modal:    document.getElementById('cx-modal'),
+      code:     document.getElementById('cx-code'),
+      title:    document.getElementById('cx-modal-title'),
+      toast:    document.getElementById('cx-toast'),
+      gen:      document.getElementById('cx-generate'),
+      reset:    document.getElementById('cx-reset'),
+      copy:     document.getElementById('cx-copy'),
+      mclose:   document.getElementById('cx-modal-close')
+    };
+  }
+
+  function setActive(id) {
+    activeId = id;
+    var m = mods[id];
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('cxb:' + id)); } catch (e) {}
+    state = (saved && typeof saved === 'object')
+      ? Object.assign(defaultsOf(id), saved)
+      : defaultsOf(id);
+    el.title.textContent = 'Код: ' + m.title;
+    renderSettings();
+    renderConnect(m);
+    buildPreview();
+  }
+
+  function save() {
+    try { localStorage.setItem('cxb:' + activeId, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function schedulePreview() {
+    clearTimeout(frameTimer);
+    frameTimer = setTimeout(buildPreview, 250);
+  }
+
+  /* ---- закрепление превью (липкий режим по умолчанию) ---- */
+  var pinned = true;
+  try { pinned = localStorage.getItem('cxb:pin') !== '0'; } catch (e) {}
+
+  function setPinned(p) {
+    pinned = p;
+    el.frameBox.classList.toggle('cx-pinned', p);
+    el.pin.textContent = p ? 'Открепить превью' : 'Закрепить превью';
+    el.frame.style.height = '';
+    if (p) {
+      el.frame.setAttribute('data-no-autosize', '1'); /* высоту задаёт CSS, скролл внутри */
+    } else {
+      el.frame.removeAttribute('data-no-autosize');
+      setTimeout(autoSizeFrame, 60);
+    }
+    try { localStorage.setItem('cxb:pin', p ? '1' : '0'); } catch (e) {}
+  }
+
+  /* ---- авто-высота превью (только в откреплённом режиме) ---- */
+  function autoSizeFrame() {
+    if (pinned) return; /* в закреплённом режиме высоту задаёт CSS */
+    try {
+      var doc = el.frame.contentDocument;
+      if (!doc || !doc.body) return;
+      var col = doc.querySelector('.cxd-col');
+      var h = col ? col.getBoundingClientRect().height : 0;
+      if (!h) h = doc.body.scrollHeight;
+      h = Math.ceil(h) + 44; /* паддинги body 22+22 */
+      if (h >= 160) el.frame.style.height = h + 'px';
+    } catch (e) {}
+  }
+
+  function buildPreview() {
+    var m = mods[activeId];
+    var body = '';
+    try {
+      body = m.demo ? m.demo(state) : '<p style="color:#878f9c">Демо не задано</p>';
+    } catch (e) {
+      body = '<pre style="color:#c0392b;white-space:pre-wrap;font:12px/1.5 monospace">Ошибка демо: ' + esc(e.message) + '</pre>';
+    }
+    /* Ловец ошибок: шум браузера ResizeObserver не показываем,
+       реальные ошибки мода — показываем плашкой */
+    var errTrap =
+      '<script>window.addEventListener("error",function(e){' +
+      'if(e&&e.message&&e.message.indexOf("ResizeObserver")>-1)return;' +
+      'var b=document.createElement("div");' +
+      'b.style.cssText="position:fixed;left:0;right:0;bottom:0;background:#c0392b;color:#fff;' +
+      'font:12px/1.4 monospace;padding:8px 12px;z-index:99999";' +
+      'b.textContent="Ошибка в коде мода: "+e.message;' +
+      '(document.body||document.documentElement).appendChild(b);});' + S_CLOSE;
+    /* Авто-высота: работает только когда превью откреплено
+       (в закреплённом режиме высоту задаёт CSS, скролл внутри iframe) */
+    var autoH =
+      '<script>(function(){' +
+      'var t=false;' +
+      'function h(){if(t)return;t=true;requestAnimationFrame(function(){t=false;' +
+      'try{var c=document.querySelector(".cxd-col");if(!c)return;' +
+      'var H=Math.ceil(c.getBoundingClientRect().height)+44;' +
+      'var f=window.parent.document.getElementById("cx-frame");' +
+      'if(f&&!f.getAttribute("data-no-autosize")&&H>=160)f.style.height=H+"px";}catch(e){}});}' +
+      'window.addEventListener("load",function(){h();setTimeout(h,80);setTimeout(h,400);});' +
+      'window.addEventListener("resize",h);' +
+      'if(window.ResizeObserver){try{new ResizeObserver(h).observe(document.documentElement);}catch(e){}}' +
+      '})();' + S_CLOSE;
+    el.frame.srcdoc =
+      '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<style>html,body{margin:0}body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#171a1f;display:flex;justify-content:center;padding:22px;box-sizing:border-box;background:#fff}.cxd-col{width:100%}</style>' +
+      errTrap +
+      autoH +
+      '</head><body><div class="cxd-col">' + body + '</div></body></html>';
+  }
+
+  /* ------------------ отрисовка настроек ------------------ */
+  function fieldLabel(f) { return '<label class="cx-label">' + esc(f.label) + '</label>'; }
+
+  function rangeOutText(f, v) {
+    return (f.zeroText && v === 0) ? f.zeroText : v + (f.unit || '');
+  }
+
+  function renderField(f) {
+    if (f.showIf && !f.showIf(state)) return ''; /* поле скрыто при текущих настройках */
+    var cls = f.type === 'color' ? 'cx-field-color'
+            : f.type === 'toggle' ? 'cx-field-toggle'
+            : f.type === 'range' ? 'cx-field-range'
+            : 'cx-field';
+    var h = (f.newRow ? '<div class="cx-break"></div>' : '') + '<div class="' + cls + '">';
+    if (f.type === 'text') {
+      h += fieldLabel(f) +
+        '<input class="cx-input" type="text" value="' + esc(state[f.key]) + '" data-key="' + f.key + '" spellcheck="false">';
+    } else if (f.type === 'select') {
+      h += fieldLabel(f) + '<select class="cx-input" data-key="' + f.key + '">';
+      f.options.forEach(function (o) {
+        h += '<option value="' + esc(o[0]) + '"' + (String(state[f.key]) === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+      });
+      h += '</select>';
+    } else if (f.type === 'color') {
+      h += fieldLabel(f) +
+        '<div class="cx-color">' +
+        '<input type="color" value="' + esc(state[f.key]) + '" data-key="' + f.key + '" aria-label="' + esc(f.label) + '">' +
+        '<input class="cx-input" type="text" value="' + esc(state[f.key]) + '" data-key="' + f.key + '">' +
+        '</div>';
+    } else if (f.type === 'toggle') {
+      h += '<label class="cx-toggle-row">' +
+        '<span class="cx-toggle-text">' + esc(f.label) + '</span>' +
+        '<span class="cx-switch"><input type="checkbox" data-key="' + f.key + '"' + (state[f.key] ? ' checked' : '') + '><span class="cx-track"></span></span>' +
+        '</label>';
+    } else if (f.type === 'range') {
+      var v = num(state[f.key], f.def, f.min, f.max);
+      h += fieldLabel(f) +
+        '<div class="cx-range">' +
+        '<input type="range" min="' + f.min + '" max="' + f.max + '" step="' + (f.step || 1) + '" value="' + v + '" data-key="' + f.key + '">' +
+        '<output>' + rangeOutText(f, v) + '</output>' +
+        '</div>';
+    }
+    return h + '</div>';
+  }
+
+  function renderSettings() {
+    var m = mods[activeId];
+    var h = '<div class="cx-mod-head"><h3>' + esc(m.title) + '</h3><p>' + esc(m.desc) + '</p></div>';
+    m.fields.forEach(function (g) {
+      if (g.showIf && !g.showIf(state)) return; /* группа скрыта при текущих настройках */
+      var open = (g.open === false) ? '' : ' open';
+      h += '<details class="cx-group"' + open + '><summary>' + esc(g.title) + '<span class="cx-caret">▾</span></summary><div class="cx-group-body">';
+      g.items.forEach(function (f) { h += renderField(f); });
+      h += '</div></details>';
+    });
+    el.settings.innerHTML = h;
+  }
+
+  function onFieldInput(e) {
+    var t = e.target;
+    var key = t.getAttribute && t.getAttribute('data-key');
+    if (!key) return;
+    var f = findField(key);
+    if (!f) return;
+    if (f.type === 'toggle') {
+      state[key] = t.checked;
+    } else if (f.type === 'range') {
+      var v = num(t.value, f.def, f.min, f.max);
+      state[key] = v;
+      var out = t.parentNode.querySelector('output');
+      if (out) out.textContent = rangeOutText(f, v);
+    } else if (f.type === 'color') {
+      var hx = hex(t.value);
+      if (!hx) return; /* ждём валидный hex из текстового поля */
+      state[key] = hx;
+      var sibs = el.settings.querySelectorAll('input[data-key="' + key + '"]');
+      for (var i = 0; i < sibs.length; i++) { if (sibs[i] !== t) sibs[i].value = hx; }
+    } else {
+      state[key] = t.value;
+    }
+    save();
+    if (f.rerender) renderSettings(); /* перерисовать панель (появить/скрыть зависимые поля) */
+    schedulePreview();
+  }
+
+  /* ------------------ блок «Как подключить» ------------------ */
+  var ICON_COPY =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="2"/>' +
+    '<path d="M5 15V5a2 2 0 0 1 2-2h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+  function renderConnect(m) {
+    var s = m.setup || {};
+    var h = '<h3>Как подключить</h3>';
+    (s.steps || []).forEach(function (st, i) {
+      h += '<div class="cx-step"><span class="cx-badge">ШАГ ' + (i + 1) + '</span><div class="cx-step-text">' + esc(st.t);
+      (st.chips || []).forEach(function (c) {
+        h += '<button type="button" class="cx-chip" data-copy="' + esc(c) + '">' + esc(c) + ICON_COPY + '</button>';
+      });
+      h += '</div></div>';
+    });
+    if (s.hint) h += '<p class="cx-connect-hint">' + esc(s.hint) + '</p>';
+    el.connect.innerHTML = h;
+    el.connect.querySelectorAll('.cx-chip').forEach(function (ch) {
+      ch.addEventListener('click', function () {
+        copyToClipboard(ch.getAttribute('data-copy'), 'Скопировано: ' + ch.getAttribute('data-copy'));
+      });
+    });
+  }
+
+  /* ------------------ защита от дублей ------------------ */
+  function bindOnce(node, event, handler) {
+    if (!node) return;
+    var flag = '__cxOn_' + event;
+    if (node[flag]) return;
+    node[flag] = true;
+    node.addEventListener(event, handler);
+  }
+
+  function init() {
+    var e = grab();
+    if (!e.settings || !e.frame || !e.frameBox || !e.pin || !e.connect || !e.modal ||
+        !e.code || !e.title || !e.toast || !e.gen || !e.reset || !e.copy || !e.mclose) return false;
+    el = e;
+
+    if (el.settings.__cxBound) return true;
+    el.settings.__cxBound = true;
+
+    setPinned(pinned);
+
+    /* делегирование: панель перерисовывается, слушатели висят на контейнере */
+    bindOnce(el.settings, 'input', onFieldInput);
+    bindOnce(el.settings, 'change', onFieldInput);
+
+    bindOnce(el.pin, 'click', function () { setPinned(!pinned); });
+    bindOnce(el.gen, 'click', function () {
+      var m = mods[activeId];
+      try { currentCode = m.generate(state); }
+      catch (err) { showToast('Ошибка генерации: ' + err.message); return; }
+      el.code.textContent = currentCode;
+      el.modal.hidden = false;
+    });
+    bindOnce(el.mclose, 'click', function () { el.modal.hidden = true; });
+    bindOnce(el.modal, 'click', function (ev) { if (ev.target === el.modal) el.modal.hidden = true; });
+    bindOnce(el.copy, 'click', function () {
+      if (currentCode) copyToClipboard(currentCode, 'Код скопирован — вставьте в Т123');
+    });
+    bindOnce(el.reset, 'click', function () {
+      try { localStorage.removeItem('cxb:' + activeId); } catch (err) {}
+      state = defaultsOf(activeId);
+      renderSettings();
+      buildPreview();
+      showToast('Настройки сброшены');
+    });
+    bindOnce(el.frame, 'load', function () {
+      setTimeout(autoSizeFrame, 50);
+      setTimeout(autoSizeFrame, 350);
+    });
+
+    if (!document.__cxEscBound) {
+      document.__cxEscBound = true;
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && el && el.modal) el.modal.hidden = true;
+      });
+    }
+
+    activate();
+    return true;
+  }
+
+  function activate() {
+    var id = (wantMod && mods[wantMod]) ? wantMod : Object.keys(mods)[0];
+    if (id) setActive(id);
+  }
+
+  function boot() {
+    if (init()) return;
+    var mo = new MutationObserver(function () {
+      if (init() && !el.settings.__cxLogged) {
+        el.settings.__cxLogged = true;
+        console.info('[DEV MODS] Конструктор инициализирован после динамической вставки разметки');
+      }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 0); });
+  } else {
+    setTimeout(boot, 0);
+  }
+
+  /* ================================================================
+     МОД: zero-slider — «Кастомный слайдер в зеро блоке» (Swiper 8.4.7)
+     Поддержка нескольких слайдеров на странице: один сниппет,
+     у каждого блока свой полный пресет настроек.
+     ================================================================ */
+  var EFFECT_OPTIONS = [
+    ['slide', 'Сдвиг (slide)'], ['fade', 'Затухание (fade)'],
+    ['cube', '3D-куб'], ['flip', '3D-переворот (flip)'],
+    ['cards', 'Стопка карточек (cards)'], ['coverflow', '3D-карусель (coverflow)']
+  ];
+  var EFFECT_LABELS = {
+    slide: 'Сдвиг', fade: 'Затухание', cube: '3D-куб',
+    flip: '3D-переворот', cards: 'Стопка карточек', coverflow: '3D-карусель'
+  };
+
+  /* Набор настроек одного слайдера; p — префикс ключей ('', 's2_', 's3_') */
+  function sliderGroups(p, name, showFn) {
+    var k = function (key) { return p + key; };
+    var collapsed = p !== ''; /* доп. слайдеры — свёрнуты по умолчанию */
+    return [
+      { title: name + ' · карточки', showIf: showFn, open: !collapsed, items: [
+        { key: k('slidesDesktop'), type: 'range', label: 'Карточек в ряд — десктоп (от 1200px)', def: 3, min: 1, max: 8, step: 1, newRow: true },
+        { key: k('slidesLaptop'), type: 'range', label: 'Ноутбук (960–1199px)', def: 3, min: 1, max: 8, step: 1 },
+        { key: k('slidesTablet'), type: 'range', label: 'Планшет (640–959px)', def: 2, min: 1, max: 8, step: 1 },
+        { key: k('slidesMobile'), type: 'range', label: 'Смартфон (до 640px)', def: 1, min: 1, max: 8, step: 1 },
+        { key: k('spaceBetween'), type: 'range', label: 'Отступ между слайдами — ПК и планшет', def: 20, min: 0, max: 100, step: 1, unit: ' px', newRow: true },
+        { key: k('spaceBetweenMobile'), type: 'range', label: 'Отступ между слайдами — смартфоны', def: 10, min: 0, max: 100, step: 1, unit: ' px' },
+        { key: k('cardRadius'), type: 'range', label: 'Скругление углов карточек (и теней 3D)', def: 0, min: 0, max: 60, step: 1, unit: ' px', newRow: true },
+        { key: k('loopAdditionalSlides'), type: 'range', label: 'Запасные слайды для цикла', def: 2, min: 0, max: 6, step: 1 }
+      ]},
+      { title: name + ' · прокрутка и эффект', showIf: showFn, open: !collapsed, items: [
+        { key: k('loop'), type: 'toggle', label: 'Бесконечная прокрутка', def: true },
+        { key: k('speed'), type: 'range', label: 'Скорость смены слайдов (0 — мгновенно)', def: 600, min: 0, max: 2000, step: 50, unit: ' мс', zeroText: 'мгновенно' },
+        { key: k('effect'), type: 'select', label: 'Эффект смены слайдов', def: 'slide', newRow: true, options: EFFECT_OPTIONS }
+      ]},
+      { title: name + ' · автопрокрутка', showIf: showFn, open: !collapsed, items: [
+        { key: k('autoplay'), type: 'toggle', label: 'Автопрокрутка', def: true },
+        { key: k('autoplayDelay'), type: 'range', label: 'Интервал', def: 5000, min: 1000, max: 15000, step: 500, unit: ' мс' },
+        { key: k('pauseOnHover'), type: 'toggle', label: 'Пауза при наведении мыши', def: true },
+        { key: k('stopOnInteraction'), type: 'toggle', label: 'Стоп после ручного листания', def: false }
+      ]},
+      { title: name + ' · точки', showIf: showFn, open: !collapsed, items: [
+        { key: k('dotGap'), type: 'range', label: 'Отступ между точками', def: 5, min: 0, max: 30, step: 1, unit: ' px' },
+        { key: k('dotRadius'), type: 'range', label: 'Скругление точек', def: 100, min: 0, max: 100, step: 1, unit: ' px' },
+        { key: k('dotWidthActive'), type: 'range', label: 'Ширина активной точки', def: 130, min: 100, max: 300, step: 5, unit: ' %' },
+        { key: k('dotFillOn'), type: 'toggle', label: 'Заливка активной точки (автопрокрутка)', def: true },
+        { key: k('dotBg'), type: 'color', label: 'Цвет точки', def: '#e7e7e7', newRow: true },
+        { key: k('dotBgActive'), type: 'color', label: 'Цвет активной точки', def: '#e7e7e7' },
+        { key: k('dotFill'), type: 'color', label: 'Цвет заливки автопрокрутки', def: '#0ea800' }
+      ]}
+    ];
+  }
+
+  function modCfg(s) {
+    var count = num(s.slidersCount, 1, 1, 3);
+    var sliders = [sliderOneCfg(s, '', 'uc-cardslider')];
+    if (count >= 2) sliders.push(sliderOneCfg(s, 's2_', 'uc-slider2'));
+    if (count >= 3) sliders.push(sliderOneCfg(s, 's3_', 'uc-slider3'));
+    return { count: count, sliders: sliders };
+  }
+
+  function sliderOneCfg(s, p, defClass) {
+    var cls = String(s[p + 'blockClass'] == null ? '' : s[p + 'blockClass']).replace(/[^a-zA-Z0-9_-]/g, '');
+    var effects = ['slide', 'fade', 'cube', 'flip', 'cards', 'coverflow'];
+    return {
+      blockClass: cls || defClass,
+      loop: !!s[p + 'loop'],
+      autoplay: !!s[p + 'autoplay'],
+      autoplayDelay: num(s[p + 'autoplayDelay'], 5000, 1000, 15000),
+      stopOnInteraction: !!s[p + 'stopOnInteraction'],
+      pauseOnHover: !!s[p + 'pauseOnHover'],
+      effect: effects.indexOf(s[p + 'effect']) > -1 ? s[p + 'effect'] : 'slide',
+      slidesDesktop: num(s[p + 'slidesDesktop'], 3, 1, 8),
+      slidesLaptop: num(s[p + 'slidesLaptop'], 3, 1, 8),
+      slidesTablet: num(s[p + 'slidesTablet'], 2, 1, 8),
+      slidesMobile: num(s[p + 'slidesMobile'], 1, 1, 8),
+      speed: num(s[p + 'speed'], 600, 0, 2000),
+      spaceBetween: num(s[p + 'spaceBetween'], 20, 0, 100),
+      spaceBetweenMobile: num(s[p + 'spaceBetweenMobile'], 10, 0, 100),
+      cardRadius: num(s[p + 'cardRadius'], 0, 0, 60),
+      loopAdditionalSlides: num(s[p + 'loopAdditionalSlides'], 2, 0, 6),
+      dotGap: num(s[p + 'dotGap'], 5, 0, 30),
+      dotRadius: num(s[p + 'dotRadius'], 100, 0, 100),
+      dotWidthActive: num(s[p + 'dotWidthActive'], 130, 100, 300),
+      dotFillOn: !!s[p + 'dotFillOn'],
+      dotBg: hex(s[p + 'dotBg']) || '#e7e7e7',
+      dotBgActive: hex(s[p + 'dotBgActive']) || '#e7e7e7',
+      dotFill: hex(s[p + 'dotFill']) || '#0ea800'
+    };
+  }
+
+  var MOD_HEAD = `/* ============================================================
+   Слайдеры для Zero Block на базе открытой библиотеки Swiper 8.4.7
+   copilp.ru · DEV MODS. Поддерживает несколько слайдеров на странице:
+   каждому блоку — свой набор настроек в списке SLIDERS ниже.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  // ------------------------- НАСТРОЙКИ -------------------------
+`;
+
+  function sliderCfgJs(S, force) {
+    /* force — только для превью: показывает десктопное количество
+       карточек на любой ширине окна. В генерируемом коде force=false. */
+    var laptop = force ? S.slidesDesktop : S.slidesLaptop;
+    var tablet = force ? S.slidesDesktop : S.slidesTablet;
+    var mobile = force ? S.slidesDesktop : S.slidesMobile;
+    var gapMob = force ? S.spaceBetween : S.spaceBetweenMobile;
+    return '    {' + NL +
+      "      blockClass: '" + S.blockClass + "', // класс Zero Block («Ещё» → «Класс блока»)" + NL +
+      '      loop: ' + S.loop + ', // бесконечная прокрутка' + NL +
+      '      autoplay: ' + S.autoplay + ', // автопрокрутка (движок мода)' + NL +
+      '      autoplayDelay: ' + S.autoplayDelay + ', // пауза автопрокрутки, мс' + NL +
+      '      stopOnInteraction: ' + S.stopOnInteraction + ', // стоп после ручного листания' + NL +
+      '      pauseOnHover: ' + S.pauseOnHover + ', // пауза при наведении мыши' + NL +
+      "      effect: '" + S.effect + "', // 'slide' | 'fade' | 'cube' | 'flip' | 'cards' | 'coverflow'" + NL +
+      '      slidesDesktop: ' + S.slidesDesktop + ', // карточек в ряд: от 1200px' + NL +
+      '      slidesLaptop: ' + laptop + ', // 960–1199px' + NL +
+      '      slidesTablet: ' + tablet + ', // 640–959px' + NL +
+      '      slidesMobile: ' + mobile + ', // до 640px' + NL +
+      '      spaceBetween: ' + S.spaceBetween + ', // отступ между слайдами: ПК и планшет, px' + NL +
+      '      spaceBetweenMobile: ' + gapMob + ', // отступ между слайдами: смартфоны, px' + NL +
+      '      cardRadius: ' + S.cardRadius + ', // скругление углов карточек и теней 3D, px (0 — выкл)' + NL +
+      '      loopAdditionalSlides: ' + S.loopAdditionalSlides + ', // запасные слайды для цикла' + NL +
+      '      speed: ' + S.speed + ', // скорость смены слайдов, мс (0 — мгновенно)' + NL +
+      '      dotGap: ' + S.dotGap + ', // отступ между точками, px' + NL +
+      '      dotRadius: ' + S.dotRadius + ', // скругление точек, px' + NL +
+      '      dotWidthActive: ' + S.dotWidthActive + ', // ширина активной точки, %' + NL +
+      '      dotFillOn: ' + S.dotFillOn + ', // заливка активной точки (индикатор автопрокрутки)' + NL +
+      "      dotBg: '" + S.dotBg + "', // фоновый цвет точки" + NL +
+      "      dotBgActive: '" + S.dotBgActive + "', // фон активной точки" + NL +
+      "      dotFill: '" + S.dotFill + "' // цвет заливки автопрокрутки" + NL +
+      '    }';
+  }
+
+  function modCfgJs(C, force) {
+    var lines = C.sliders.map(function (S) { return sliderCfgJs(S, force); });
+    return '  // Настройки каждого слайдера на странице (по порядку).' + NL +
+      '  // ВАЖНО: классы блоков не должны содержать друг друга:' + NL +
+      '  // «slider» и «slider2» — конфликт (первое имя найдётся внутри второго),' + NL +
+      '  // «slider-one» и «slider-two» — правильно.' + NL +
+      '  var SLIDERS = [' + NL + lines.join(',' + NL) + NL + '  ];' + NL + NL;
+  }
+
+  var MOD_BODY = `
+  // ------------------- Загрузка Swiper 8.4.7 -------------------
+  // Версия зафиксирована намеренно: у Swiper 9+ переписан режим
+  // loop (слайды перетаскиваются, а не клонируются), и на карточках
+  // Zero Block он «залипает» на втором шаге. 8.4.7 проверена.
+  // Библиотека загружается один раз и используется всеми слайдерами.
+  var SWIPER_CSS = 'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.css';
+  var SWIPER_JS = 'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.js';
+
+  function loadSwiper(cb) {
+    // Стили Swiper подключаем ВСЕГДА: в них задан transition ленты,
+    // по которому библиотека отслеживает завершение анимации,
+    // а также стили 3D-эффектов и теней слайдов.
+    if (!document.querySelector('link[data-dm-swiper]')) {
+      var l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = SWIPER_CSS;
+      l.setAttribute('data-dm-swiper', '1');
+      document.head.appendChild(l);
+    }
+    if (window.Swiper) { cb(); return; }
+    var s = document.createElement('script');
+    s.src = SWIPER_JS;
+    s.onload = function () { cb(); };
+    s.onerror = function () {
+      console.warn('[DEV MODS] Не удалось загрузить Swiper — слайдеры не запущены');
+    };
+    (document.head || document.documentElement).appendChild(s);
+  }
+
+  // Сколько слайдов нужно одному слайдеру для надёжного бесшовного цикла
+  function loopNeed(C) {
+    var per;
+    if (C.effect === 'slide' || C.effect === 'coverflow') {
+      per = Math.max(C.slidesDesktop, C.slidesLaptop, C.slidesTablet, C.slidesMobile);
+    } else {
+      per = 1; // у эффектов виден один слайд
+    }
+    return Math.max(per * 2, per + 2, 4) + C.loopAdditionalSlides;
+  }
+
+  // ------------------- Поиск и запуск слайдеров ----------------
+  function boot() {
+    // Ищем все внутренние контейнеры будущих слайдеров
+    var zones = document.querySelectorAll('.slide-zone > .tn-molecule');
+    if (!zones.length) return;
+
+    Array.prototype.forEach.call(zones, function (zone) {
+      if (zone.classList.contains('swiper')) return; // защита от повторного запуска
+
+      // Контейнер относится к первому подходящему набору настроек
+      var match = null, section = null, names = [];
+      for (var i = 0; i < SLIDERS.length; i++) {
+        var sec = zone.closest('[class*="' + SLIDERS[i].blockClass + '"]');
+        if (sec) {
+          names.push(SLIDERS[i].blockClass);
+          if (!match) { match = SLIDERS[i]; section = sec; }
+        }
+      }
+      if (!match) return;
+      if (names.length > 1) {
+        console.warn('[DEV MODS] Контейнер подошёл под несколько наборов настроек (' + names.join(', ') + '). Применён первый: ' + match.blockClass + '. Классы блоков не должны содержать друг друга.');
+      }
+      createSlider(zone, section, match);
+    });
+  }
+
+  function createSlider(zone, section, C) {
+
+    // Собираем карточки, которые превратим в слайды
+    var items = zone.querySelectorAll('.slide-item');
+    if (!items.length) return;
+
+    // Помечаем контейнер служебным классом Swiper
+    zone.classList.add('swiper');
+
+    // Формируем ленту слайдов
+    var tape = document.createElement('div');
+    tape.classList.add('swiper-wrapper');
+
+    var originals = 0; // столько точек и будет в пагинации
+    items.forEach(function (item) {
+      item.classList.add('swiper-slide');
+      tape.appendChild(item);
+      originals++;
+    });
+
+    // Заменяем содержимое контейнера готовой структурой
+    zone.innerHTML = '';
+    zone.appendChild(tape);
+
+    // ---- Дубли карточек, если их мало для бесшовного цикла ----
+    // Swiper при нехватке слайдов молча отключает loop. Добираем
+    // недостающее дублями набора: на число точек это не влияет
+    // (они считаются по исходным карточкам).
+    if (C.loop) {
+      var need = loopNeed(C);
+      var rounds = 0;
+      while (tape.children.length < need && rounds < 5) {
+        for (var d = 0; d < originals; d++) {
+          tape.appendChild(tape.children[d].cloneNode(true));
+        }
+        rounds++;
+      }
+      if (tape.children.length > originals) {
+        console.info('[DEV MODS] Слайдер «' + C.blockClass + '»: карточек (' + originals + ') мало для бесшовного цикла — добавлено дублей: ' + (tape.children.length - originals) + '.');
+      }
+    }
+
+    // Управляющие элементы
+    var arrowNext = section.querySelector('.nav-arrow-right');
+    var arrowPrev = section.querySelector('.nav-arrow-left');
+    var dotsBox = section.querySelector('.nav-dots');
+
+    var isSlide = C.effect === 'slide';
+    var isCover = C.effect === 'coverflow';
+
+    // Скорость анимации. 0 в настройках = мгновенная смена, но внутри
+    // используем 1 мс вместо строгого нуля: при нулевой длительности
+    // браузер не создаёт transition и не шлёт transitionend, на котором
+    // держится механика бесконечного цикла Swiper.
+    var animSpeed = C.speed > 0 ? C.speed : 1;
+
+    // Параметры отрисовки.
+    // ВАЖНО: модули navigation и autoplay Swiper НЕ подключаются —
+    // листанием управляет собственный движок мода (ниже). Каждый шаг
+    // это прямая команда slideToLoop/slideTo с явной длительностью
+    // анимации, у которой нет внутренних блокировок библиотеки.
+    var setup = {
+      loop: C.loop,
+      watchOverflow: false,   // не блокировать ленту, если всё влезло
+      observer: true,         // пересчитываться при поздних изменениях Zero Block
+      observeParents: true,
+      effect: C.effect,
+      speed: animSpeed,
+      loopAdditionalSlides: C.loopAdditionalSlides, // запасные слайды для цикла
+      simulateTouch: true,    // перетягивание мышью и свайпы
+      grabCursor: true,
+      resistanceRatio: 0.85
+    };
+
+    // Параметры эффектов
+    if (C.effect === 'fade') setup.fadeEffect = { crossFade: true };
+    if (C.effect === 'cube') setup.cubeEffect = { shadow: true, slideShadows: true };
+    if (C.effect === 'flip') setup.flipEffect = { slideShadows: true };
+    if (C.effect === 'cards') setup.cardsEffect = { slideShadows: true };
+    if (isCover) setup.coverflowEffect = { rotate: 30, depth: 120, modifier: 1.2, stretch: 0, slideShadows: true };
+
+    if (isSlide || isCover) {
+      // Число карточек по устройствам; ширину карточки считает Swiper
+      // (контейнер делится поровну между карточками с учётом отступов)
+      setup.slidesPerView = C.slidesMobile;      // смартфоны: до 640px
+      setup.spaceBetween = C.spaceBetweenMobile; // смартфонный отступ
+      setup.breakpoints = {
+        640:  { slidesPerView: C.slidesTablet,  spaceBetween: C.spaceBetween },
+        960:  { slidesPerView: C.slidesLaptop,  spaceBetween: C.spaceBetween },
+        1200: { slidesPerView: C.slidesDesktop, spaceBetween: C.spaceBetween }
+      };
+      if (isCover) setup.centeredSlides = true; // активная карточка по центру карусели
+    } else {
+      // fade / куб / flip / карточки: один слайд занимает весь контейнер slide-zone
+      setup.slidesPerView = 1;
+      setup.spaceBetween = 0;
+      if (C.effect !== 'fade') setup.centeredSlides = true;
+    }
+
+    // Вариант V2 — если у блока дополнительно задан класс uc-cardslider-v2:
+    // один слайд, а на экранах от 1920px — два
+    if (section.classList.contains('uc-cardslider-v2')) {
+      setup.slidesPerView = 1;
+      setup.spaceBetween = C.spaceBetweenMobile;
+      setup.breakpoints = {
+        320:  { slidesPerView: 1 },
+        480:  { slidesPerView: 1 },
+        640:  { slidesPerView: 1, spaceBetween: C.spaceBetween },
+        768:  { slidesPerView: 1 },
+        1000: { slidesPerView: 1, spaceBetween: C.spaceBetween },
+        1360: { slidesPerView: 1 },
+        1920: { slidesPerView: 2, spaceBetween: C.spaceBetween }
+      };
+    }
+
+    // Запускаем слайдер
+    var slider = new Swiper(zone, setup);
+
+    // ==========================================================
+    // СОБСТВЕННЫЙ ДВИЖОК: стрелки, точки и автопрокрутка.
+    // Каждый шаг — прямая команда slideToLoop/slideTo к следующему
+    // реальному слайду с явной длительностью анимации. Перетягивание
+    // мышью и свайпы обрабатывает ядро Swiper; на время жеста
+    // автопрокрутка ставится на паузу, чтобы таймер не двигал ленту
+    // одновременно с рукой.
+    // ==========================================================
+    var busy = false; // идёт ли анимация сейчас (для такта автопрокрутки)
+    slider.on('transitionStart', function () { busy = true; });
+    slider.on('transitionEnd', function () { busy = false; });
+
+    var autoTimer = null;    // идёт ли автопрокрутка сейчас
+    var autoStopped = false; // остановлена ли навсегда (стоп после ручного листания)
+
+    function startAuto() {
+      if (!C.autoplay || autoTimer || autoStopped) return;
+      autoTimer = setInterval(function () {
+        if (busy) return; // предыдущая анимация ещё не доиграла — пропускаем такт
+        go(1, true);
+      }, C.autoplayDelay);
+    }
+    function stopAuto(permanent) {
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+      if (permanent) autoStopped = true;
+    }
+    // После ручного действия: либо стоп навсегда, либо продолжаем
+    function afterManual() {
+      if (!C.autoplay) return;
+      if (C.stopOnInteraction) stopAuto(true);
+      else if (!autoTimer) startAuto();
+    }
+
+    // Затемнение стрелок на краях (только когда loop выключен)
+    function paintDisabled(t) {
+      if (C.loop) return;
+      if (arrowPrev) arrowPrev.classList.toggle('swiper-button-disabled', t <= 0);
+      if (arrowNext) arrowNext.classList.toggle('swiper-button-disabled', t >= originals - 1);
+    }
+
+    function stepTo(target) {
+      if (C.loop && slider.slideToLoop) {
+        slider.slideToLoop(target, animSpeed);
+      } else {
+        var t = Math.min(originals - 1, Math.max(0, target));
+        slider.slideTo(t, animSpeed);
+        paintDisabled(t);
+        if (t >= originals - 1) stopAuto(false); // дошли до конца ленты
+      }
+    }
+
+    function go(dir, isAuto) {
+      stepTo(slider.realIndex + dir); // шаг всегда 1 карточка
+      if (!isAuto) afterManual();
+    }
+
+    if (arrowNext) arrowNext.addEventListener('click', function () { go(1); });
+    if (arrowPrev) arrowPrev.addEventListener('click', function () { go(-1); });
+
+    // Перетягивание/свайп: пауза автопрокрутки на время жеста
+    slider.on('touchStart', function () { stopAuto(false); });
+    slider.on('touchEnd', function () { afterManual(); });
+
+    // Пауза автопрокрутки при наведении на слайдер
+    if (C.autoplay && C.pauseOnHover) {
+      zone.addEventListener('mouseenter', function () { stopAuto(false); });
+      zone.addEventListener('mouseleave', function () { startAuto(); });
+    }
+    startAuto();
+
+    // ---- Точки: ровно по числу карточек, клик по любой ведёт к своей ----
+    var bullets = [];
+    if (dotsBox) {
+      dotsBox.innerHTML = '';
+      for (var i = 0; i < originals; i++) {
+        var dot = document.createElement('span');
+        dot.className = 'swiper-pagination-bullet';
+        dotsBox.appendChild(dot);
+        bullets.push(dot);
+      }
+    }
+
+    // Длительность заливки активной точки = задержке автопрокрутки
+    // (если автопрокрутка выключена — активная точка заливается мгновенно)
+    var fillTime = C.autoplay ? C.autoplayDelay : 0;
+
+    function syncDots() {
+      if (!bullets.length) return;
+      var idx = ((slider.realIndex % originals) + originals) % originals;
+      bullets.forEach(function (dot, j) {
+        dot.classList.toggle('swiper-pagination-bullet-active', j === idx);
+        if (C.dotFillOn) dot.style.setProperty('--dot-fill-time', fillTime + 'ms');
+      });
+      paintDisabled(slider.realIndex);
+    }
+
+    slider.on('slideChange', syncDots);
+    syncDots();
+
+    if (dotsBox) {
+      dotsBox.addEventListener('click', function (evt) {
+        var clicked = evt.target;
+        if (!clicked.classList.contains('swiper-pagination-bullet')) return;
+        var pos = bullets.indexOf(clicked);
+        if (pos < 0) return;
+        stepTo(pos);
+        afterManual();
+      });
+    }
+
+    // Пересчёт геометрии при изменении окна браузера
+    window.addEventListener('resize', function () { slider.update(); });
+  }
+
+  // Запуск после готовности DOM
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { loadSwiper(boot); });
+  } else {
+    loadSwiper(boot);
+  }
+})();`;
+
+  /* CSS одного слайдера: всё скоупится на его класс блока,
+     переменные точек задаются на блоке — цвета не конфликтуют */
+  function sliderCss(S, idx) {
+    var Ssel = "[class*='" + S.blockClass + "']";
+    var fill = S.autoplay ? S.autoplayDelay : 0;
+    var fillVar = S.dotFillOn ? '  --msDotFill: ' + S.dotFill + ';' + NL : '';
+
+    var radiusBlock = '';
+    if (S.cardRadius > 0) {
+      radiusBlock =
+        NL + '/* Скругление углов карточек */' + NL +
+        Ssel + ' .slide-item > .tn-molecule,' + NL +
+        Ssel + ' .slide-item > .tn-atom__sbs-anim-wrapper > .tn-molecule {' + NL +
+        '  border-radius: ' + S.cardRadius + 'px;' + NL +
+        '}' + NL +
+        NL + '/* Тени слайдов у 3D-эффектов повторяют скругление карточек */' + NL +
+        Ssel + ' .swiper-slide-shadow-top,' + NL +
+        Ssel + ' .swiper-slide-shadow-right,' + NL +
+        Ssel + ' .swiper-slide-shadow-bottom,' + NL +
+        Ssel + ' .swiper-slide-shadow-left {' + NL +
+        '  border-radius: ' + S.cardRadius + 'px;' + NL +
+        '}' + NL;
+    }
+
+    var css = `/* ===== Слайдер ${idx} · ${Ssel} · эффект: ${S.effect} ===== */
+/* Переменные точек заданы на блоке — у каждого слайдера свои цвета */
+ ${Ssel} {
+  --msDotBg: ${S.dotBg};
+  --msDotGap: ${S.dotGap}px;
+  --msDotRadius: ${S.dotRadius}px;
+  --msDotWidth: 100%;
+  --msDotHeight: 100%;
+  --msDotBgActive: ${S.dotBgActive};
+  --msDotWidthActive: ${S.dotWidthActive}%;
+  --dot-fill-time: ${fill}ms;
+` + fillVar + `}
+
+/* Лента: карточки в один ряд без переноса.
+   Выравнивание от начала — лентой управляет Swiper через transform */
+ ${Ssel} .swiper-wrapper {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+
+/* Слайды не сжимаются — ширину считает Swiper */
+ ${Ssel} .swiper-slide { flex-shrink: 0; }
+
+/* Обрезаем всё за пределами слайдера
+   (если нужно, чтобы слайды выступали — поставьте visible) */
+ ${Ssel} .swiper {
+  overflow: hidden !important;
+}
+
+/* Прячем содержимое, выходящее за границы карточки */
+ ${Ssel} .slide-item > .tn-molecule,
+ ${Ssel} .slide-item > .tn-atom__sbs-anim-wrapper > .tn-molecule {
+  overflow: hidden;
+}
+` + radiusBlock + `
+/* Точки всегда в одну строку с заданным промежутком */
+ ${Ssel} .nav-dots {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  gap: var(--msDotGap);
+}
+
+/* Курсор и плавный отклик у стрелок */
+ ${Ssel} .nav-arrow-right,
+ ${Ssel} .nav-arrow-left {
+  cursor: pointer;
+  transition: all 0.2s ease-in;
+}
+
+/* Слегка уменьшаем стрелку при наведении */
+ ${Ssel} .nav-arrow-left:hover,
+ ${Ssel} .nav-arrow-right:hover {
+  scale: 0.95;
+}
+
+/* Полупрозрачная неактивная стрелка (когда loop выключен) */
+ ${Ssel} .swiper-button-disabled {
+  opacity: 0.5;
+}
+
+/* Базовый вид точки: точка занимает всю высоту элемента nav-dots,
+   ширина делится поровну между точками (активная — шире на %) */
+ ${Ssel} .swiper-pagination-bullet {
+  position: relative;
+  display: block;
+  flex-shrink: 1;
+  background: var(--msDotBg);
+  opacity: 1;
+  width: var(--msDotWidth);
+  height: var(--msDotHeight);
+  border-radius: var(--msDotRadius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.3s ease-in-out;
+}
+
+/* Активная точка — цвет и ширина из переменных */
+ ${Ssel} .swiper-pagination-bullet-active {
+  background: var(--msDotBgActive);
+  width: var(--msDotWidthActive);
+}
+
+/* Заливка активной точки — индикатор автопрокрутки.
+   Длительность задаётся переменной --dot-fill-time (на блоке и на точке) */
+ ${Ssel} .swiper-pagination-bullet::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--msDotFill, transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+ ${Ssel} .swiper-pagination-bullet-active::after {
+  transform: scaleX(1);
+  transition: transform var(--dot-fill-time, 0ms) linear;
+}`;
+    return css;
+  }
+
+  function cssAll(C) {
+    var parts = C.sliders.map(function (S, i) { return sliderCss(S, i + 1); });
+    return parts.join(NL);
+  }
+
+  function modJsCode(C, force) {
+    return MOD_HEAD + modCfgJs(C, force) + MOD_BODY;
+  }
+
+  /* ------------------ генерация итогового кода ------------------ */
+  function zsGenerate(v, force) {
+    var C = modCfg(v);
+    return '<style>' + NL +
+      cssAll(C) + NL +
+      '</style>' + NL + NL +
+      '<script>' + NL +
+      modJsCode(C, !!force) + NL +
+      S_CLOSE;
+  }
+
+  /* ------------------ демо для превью ------------------ */
+  var CARD_GRADS = [
+    '#0ea800,#5ede4e', '#171a1f,#3d4a5c', '#2563eb,#7aa5f8',
+    '#d97706,#f5b04d', '#7c3aed,#b18cf5'
+  ];
+
+  function demoArrow(cls, d, side) {
+    return '<div class="' + cls + '" style="position:absolute;' + side + ':10px;top:50%;transform:translateY(-50%);' +
+      'width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 6px 18px rgba(23,26,31,.16);' +
+      'display:flex;align-items:center;justify-content:center">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="' + d + '" stroke="#171a1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>';
+  }
+
+  function demoSection(S, i) {
+    var cards = '';
+    for (var n = 1; n <= 5; n++) {
+      var g = CARD_GRADS[(n - 1) % CARD_GRADS.length].split(',');
+      cards +=
+        '<div class="slide-item">' +
+          '<div class="tn-molecule" style="box-sizing:border-box;height:172px;padding:18px;background:#fff;border:1px solid #e6eaf0;box-shadow:0 10px 24px rgba(23,26,31,.08)">' +
+            '<div style="width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,' + g[0] + ',' + g[1] + ');color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px">' + n + '</div>' +
+            '<div style="margin-top:14px;font-weight:600;font-size:15px;color:#171a1f">Карточка ' + n + '</div>' +
+            '<div style="margin-top:6px;font-size:12.5px;line-height:1.45;color:#878f9c">Пример карточки. В Zero Block замените на свои элементы с классом slide-item.</div>' +
+          '</div>' +
+        '</div>';
+    }
+    return '' +
+      '<div style="margin:0 0 8px;font-size:11.5px;font-weight:700;letter-spacing:.05em;color:#878f9c;text-transform:uppercase">' +
+        'Слайдер ' + (i + 1) + ' · класс ' + esc(S.blockClass) + ' · эффект: ' + (EFFECT_LABELS[S.effect] || S.effect) +
+      '</div>' +
+      '<section class="' + esc(S.blockClass) + '" style="position:relative;padding:24px 16px 18px;background:#f2f4f8;border-radius:16px;margin:0 0 26px">' +
+        '<div style="position:relative">' +
+          '<div class="slide-zone"><div class="tn-molecule" style="margin:0">' + cards + '</div></div>' +
+          demoArrow('nav-arrow-left', 'M15 6l-6 6 6 6', 'left') +
+          demoArrow('nav-arrow-right', 'M9 6l6 6-6 6', 'right') +
+        '</div>' +
+        '<div class="nav-dots" style="width:120px;height:8px;margin:16px auto 0"></div>' +
+      '</section>';
+  }
+
+  function zsDemo(v) {
+    var C = modCfg(v);
+    var out = '';
+    C.sliders.forEach(function (S, i) { out += demoSection(S, i); });
+    out += '<p style="text-align:center;color:#878f9c;font-size:13px;margin:2px 0 0">' +
+      'Превью живое: стрелки, точки, автопрокрутка и перетягивание карточек работают. ' +
+      'В окне превью всегда показано десктопное количество карточек.</p>';
+    return out + zsGenerate(v, true);
+  }
+
+  CXB.register({
+    id: 'zero-slider',
+    title: 'Кастомный слайдер в зеро блоке',
+    desc: 'Слайдеры для Zero Block на базе открытой библиотеки Swiper 8.4.7: любые карточки из вашего макета, стрелки и точки. Поддерживает несколько слайдеров на странице — у каждого свой набор настроек.',
+    setup: {
+      hint: 'Один сниппет обслуживает все слайдеры страницы. Классы блоков не должны содержать друг друга («slider» внутри «slider2» — конфликт; «slider-one» и «slider-two» — правильно). Если добавить блоку дополнительный класс uc-cardslider-v2 — на экранах уже 1920px будет одна карточка в ряд.',
+      steps: [
+        { t: 'Соберите структуру слайдера в Zero Block: группа-обёртка с классом slide-zone, внутри неё — контейнер карточек, а в контейнере — карточки. Каждой карточке добавьте класс:', chips: ['slide-item'] },
+        { t: 'Стрелкам листания добавьте классы:', chips: ['nav-arrow-left', 'nav-arrow-right'] },
+        { t: 'Элементу-полоске, в котором будут точки, добавьте класс — точки подстроятся под его размер, а цвета берутся из настроек:', chips: ['nav-dots'] },
+        { t: 'Самому зеро-блоку добавьте класс слайдера (для первого слайдера — по умолчанию):', chips: ['uc-cardslider'] },
+        { t: 'Нажмите «Сгенерировать код» выше и вставьте код в блок Т123 (HTML-код) на этой же странице.' }
+      ]
+    },
+    fields: [
+      { title: 'Слайдеры на странице', items: [
+        { key: 'slidersCount', type: 'select', label: 'Сколько слайдеров на странице', def: '1', rerender: true,
+          options: [['1', 'Один'], ['2', 'Два'], ['3', 'Три']] },
+        { key: 'blockClass', type: 'text', label: 'Класс блока — слайдер 1', def: 'uc-cardslider' },
+        { key: 's2_blockClass', type: 'text', label: 'Класс блока — слайдер 2', def: 'uc-slider2',
+          showIf: function (s) { return num(s.slidersCount, 1, 1, 3) >= 2; } },
+        { key: 's3_blockClass', type: 'text', label: 'Класс блока — слайдер 3', def: 'uc-slider3',
+          showIf: function (s) { return num(s.slidersCount, 1, 1, 3) >= 3; } }
+      ]}
+    ].concat(
+      sliderGroups('', 'Слайдер 1', function () { return true; }),
+      sliderGroups('s2_', 'Слайдер 2', function (s) { return num(s.slidersCount, 1, 1, 3) >= 2; }),
+      sliderGroups('s3_', 'Слайдер 3', function (s) { return num(s.slidersCount, 1, 1, 3) >= 3; })
+    ),
+    demo: zsDemo,
+    generate: zsGenerate
+  });
+
+})();
