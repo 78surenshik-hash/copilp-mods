@@ -1,8 +1,8 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.0
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.1
    Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.0" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.1" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
    Ядро: каркас v1.7 (липкое превью, открепление, авто-высота,
@@ -10,6 +10,12 @@
    (grab в момент init, MutationObserver, bindOnce).
    Мод: zero-slider v3.0 — слайдеры для Zero Block на Swiper 8.4.7,
    поддержка нескольких слайдеров на странице.
+   Изменения v3.1:
+   - превью: демо-стрелки подняты над карточками (z-index:5).
+     Причина: собственный CSS Swiper задаёт контейнеру слайдера
+     .swiper{z-index:1}, из-за чего стрелки демо без z-index
+     уходили под карточки. Сгенерированный код НЕ менялся —
+     на сайте слои стрелкам задаёт сама Тильда.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -1009,8 +1015,12 @@
     '#d97706,#f5b04d', '#7c3aed,#b18cf5'
   ];
 
+  /* z-index:5 у демо-стрелок — выше контейнера слайдера:
+     собственный CSS Swiper задаёт .swiper{z-index:1}.
+     На реальном сайте слои стрелкам задаёт Тильда, поэтому
+     в сгенерированный код эта правка не входит. */
   function demoArrow(cls, d, side) {
-    return '<div class="' + cls + '" style="position:absolute;' + side + ':10px;top:50%;transform:translateY(-50%);' +
+    return '<div class="' + cls + '" style="position:absolute;' + side + ':10px;top:50%;transform:translateY(-50%);z-index:5;' +
       'width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 6px 18px rgba(23,26,31,.16);' +
       'display:flex;align-items:center;justify-content:center">' +
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
