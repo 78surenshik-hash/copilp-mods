@@ -1,27 +1,25 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.2
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.3
    Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.2" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.3" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
    Ядро: каркас v1.7 (липкое превью, открепление, авто-высота,
    ловец ошибок) + устойчивость к динамической подгрузке ЛК.
-   Изменения v3.2 (движок прокрутки переписан):
-   - режим без цикла: лента доезжает до конца (последние карточки
-     видны целиком), стрелка «вперёд» гаснет ровно на конечной
-     позиции; точки = числу позиций ленты и пересчитываются при
-     смене устройства. Раньше лента «умирала» за две карточки до
-     конца, а точки показывали недостижимые позиции
-   - режим «бесконечная прокрутка»: теперь цикл ведёт собственный
-     движок — после последней позиции лента плавно возвращается
-     к первой карточке (до первой назад — к последней). Встроенный
-     loop Swiper 8 отключён: он периодически рассинхронизировался
-     (резкая отмотка ленты и старт со второй карточки)
-   - ручное дублирование карточек и поле «Запасные слайды для
-     цикла» удалены — стали не нужными
-   Изменения v3.1: демо-стрелки превью подняты над карточками
-   (z-index:5), т.к. CSS Swiper задаёт .swiper{z-index:1}.
+   Изменения v3.3 (бесконечная прокрутка переписана):
+   - с включённой бесконечной прокруткой лента крутится ПОСТОЯННО,
+     без остановки на конце и без возврата к первой карточке:
+     слева и справа от набора карточек движок кладёт его точные
+     копии и «тихо» (без анимации) перескакивает между наборами —
+     визуально это не заметно. Раньше после последней позиции
+     лента останавливалась и возвращалась к первой
+   - карусель (coverflow) с бесконечной прокруткой: карточки видны
+     сразу и слева (боковая копия набора заполняет обе стороны)
+   - режим без цикла не менялся: лента доезжает до конца, стрелки
+     гаснут на конечной позиции, точки — по числу позиций ленты
+   Изменения v3.2: движок без цикла (предел по точкам остановки
+   Swiper), точки по позициям; v3.1: демо-стрелки поверх карточек.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -444,7 +442,7 @@
         { key: k('cardRadius'), type: 'range', label: 'Скругление углов карточек (и теней 3D)', def: 0, min: 0, max: 60, step: 1, unit: ' px', newRow: true }
       ]},
       { title: name + ' · прокрутка и эффект', showIf: showFn, open: !collapsed, items: [
-        { key: k('loop'), type: 'toggle', label: 'Бесконечная прокрутка (после последней — к первой)', def: true },
+        { key: k('loop'), type: 'toggle', label: 'Бесконечная прокрутка (лента крутится без остановки)', def: true },
         { key: k('speed'), type: 'range', label: 'Скорость смены слайдов (0 — мгновенно)', def: 600, min: 0, max: 2000, step: 50, unit: ' мс', zeroText: 'мгновенно' },
         { key: k('effect'), type: 'select', label: 'Эффект смены слайдов', def: 'slide', newRow: true, options: EFFECT_OPTIONS }
       ]},
@@ -523,7 +521,7 @@
     var gapMob = force ? S.spaceBetween : S.spaceBetweenMobile;
     return '    {' + NL +
       "      blockClass: '" + S.blockClass + "', // класс Zero Block («Ещё» → «Класс блока»)" + NL +
-      '      loop: ' + S.loop + ', // бесконечная прокрутка: после последней позиции — возврат к первой' + NL +
+      '      loop: ' + S.loop + ', // бесконечная прокрутка: лента крутится без остановки' + NL +
       '      autoplay: ' + S.autoplay + ', // автопрокрутка (движок мода)' + NL +
       '      autoplayDelay: ' + S.autoplayDelay + ', // пауза автопрокрутки, мс' + NL +
       '      stopOnInteraction: ' + S.stopOnInteraction + ', // стоп после ручного листания' + NL +
@@ -625,12 +623,29 @@
     var tape = document.createElement('div');
     tape.classList.add('swiper-wrapper');
 
-    var originals = 0; // сколько карточек задал пользователь
+    var N = 0; // сколько карточек задал пользователь
     items.forEach(function (item) {
       item.classList.add('swiper-slide');
       tape.appendChild(item);
-      originals++;
+      N++;
     });
+
+    // ---- Бесконечная прокрутка: полные копии набора карточек ----
+    // Слева и справа от исходного набора кладём его точную копию.
+    // Копии неотличимы от оригинала, поэтому «тихие» перескоки между
+    // наборами (без анимации, ровно на ширину набора) не видны —
+    // лента крутится бесконечно, без остановки на конце и возвратов.
+    var loopMode = !!C.loop;
+    if (loopMode) {
+      var leftFrag = document.createDocumentFragment();
+      var rightFrag = document.createDocumentFragment();
+      for (var k = 0; k < N; k++) {
+        leftFrag.appendChild(tape.children[k].cloneNode(true));
+        rightFrag.appendChild(tape.children[k].cloneNode(true));
+      }
+      tape.appendChild(rightFrag);
+      tape.insertBefore(leftFrag, tape.firstChild);
+    }
 
     // Заменяем содержимое контейнера готовой структурой
     zone.innerHTML = '';
@@ -645,18 +660,15 @@
     var isCover = C.effect === 'coverflow';
 
     // Скорость анимации. 0 в настройках = мгновенная смена, но внутри
-    // используем 1 мс вместо строгого нуля: при нулевой длительности
-    // браузер не создаёт transition и не шлёт transitionend, по которому
-    // движок понимает, что анимация закончилась.
+    // используем 1 мс: при нулевой длительности браузер не создаёт
+    // transition, и плавные шаги не работают.
     var animSpeed = C.speed > 0 ? C.speed : 1;
 
-    // Параметры отрисовки.
-    // ВАЖНО: встроенные модули Swiper (navigation, autoplay, loop)
-    // НЕ используются — листанием и цикличностью управляет собственный
-    // движок мода (ниже). Каждый шаг это прямая команда slideTo
-    // с явной длительностью анимации, без внутренних блокировок.
+    // Параметры отрисовки. Встроенные модули Swiper (navigation,
+    // autoplay, loop) НЕ используются — листанием, точками и циклом
+    // управляет собственный движок мода (ниже).
     var setup = {
-      loop: false,            // цикличность делает собственный движок мода
+      loop: false,            // бесконечность делает движок мода на копиях набора
       watchOverflow: false,   // не блокировать ленту, если всё влезло
       observer: true,         // пересчитываться при поздних изменениях Zero Block
       observeParents: true,
@@ -713,41 +725,56 @@
 
     // ==========================================================
     // СОБСТВЕННЫЙ ДВИЖОК: стрелки, точки, автопрокрутка и цикл.
-    // Позиция ленты — индекс крайней левой видимой карточки.
-    // Последняя позиция зависит от того, сколько карточек видно
-    // сейчас: при трёх карточках в ряд лента встаёт так, чтобы
-    // последние карточки были видны целиком, и дальше не едет.
-    // Бесконечная прокрутка: после последней позиции лента плавно
-    // возвращается к первой карточке (до первой назад — к последней).
-    // Встроенный loop Swiper 8 не используется: он периодически
-    // рассинхронизируется и отматывает ленту рывком не с той карточки.
+    // pos — текущая позиция ленты (индекс крайней левой видимой
+    // карточки; у 3D-эффектов — центральной). В режиме бесконечной
+    // прокрутки лента состоит из трёх одинаковых наборов, позиция
+    // держится в среднем наборе; если лента ушла в боковую копию,
+    // перед следующим шагом она «тихо» (без анимации) перескакивает
+    // ровно на ширину набора — визуально это не заметно.
     // ==========================================================
-    var busy = false; // идёт ли анимация сейчас (для такта автопрокрутки)
-    slider.on('transitionStart', function () { busy = true; });
-    slider.on('transitionEnd', function () { busy = false; });
+    var pos = loopMode ? N : 0;
+    var lastMove = 0;
 
-    var autoTimer = null;    // идёт ли автопрокрутка сейчас
-    var autoStopped = false; // остановлена ли навсегда (стоп после ручного листания)
+    // старт: встаём на первый слайд исходного набора
+    slider.slideTo(pos, 0, false);
 
-    // Последняя достижимая позиция ленты (меняется по устройствам)
-    function maxIndex() {
-      var centered = C.effect !== 'slide' && C.effect !== 'fade'; // у 3D-эффектов активная карточка по центру
-      var per = Math.floor(parseFloat(slider.params.slidesPerView) || 1);
-      if (per < 1) per = 1;
-      var m = centered ? originals - Math.ceil(per / 2) : originals - per;
-      if (!(m > 0)) m = 0;
-      // страховка по собственным точкам остановки Swiper
-      try {
-        var sg = slider.snapGrid.length - 1;
-        if (typeof sg === 'number' && sg >= 0 && sg < m) m = sg;
-      } catch (err) {}
-      return m;
+    function isBusy() {
+      return (Date.now() - lastMove) < (animSpeed + 80);
     }
+
+    // Предел прокрутки в режиме без цикла: берём у Swiper его
+    // собственные точки остановки — последняя из них это позиция,
+    // где лента упирается концом в контейнер (видны последние
+    // карточки целиком). Дальше лента физически не едет.
+    function maxIndex() {
+      var m = 0;
+      try {
+        if (slider.snapGrid && slider.snapGrid.length) m = slider.snapGrid.length - 1;
+      } catch (err) { m = 0; }
+      return m > 0 ? m : 0;
+    }
+
+    function slideIdx(target, speed, silent) {
+      slider.slideTo(target, speed, !silent);
+      pos = target;
+      lastMove = Date.now();
+    }
+
+    // тихий перескок на ширину набора (только в режиме цикла)
+    function normalizePos() {
+      if (!loopMode) return;
+      if (pos >= 2 * N) slideIdx(pos - N, 0, true);
+      else if (pos < N) slideIdx(pos + N, 0, true);
+    }
+
+    // Автопрокрутка
+    var autoTimer = null;
+    var autoStopped = false;
 
     function startAuto() {
       if (!C.autoplay || autoTimer || autoStopped) return;
       autoTimer = setInterval(function () {
-        if (busy) return; // предыдущая анимация ещё не доиграла — пропускаем такт
+        if (isBusy()) return; // предыдущий шаг ещё не доиграл — пропускаем такт
         go(1, true);
       }, C.autoplayDelay);
     }
@@ -755,40 +782,36 @@
       if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
       if (permanent) autoStopped = true;
     }
-    // После ручного действия: либо стоп навсегда, либо продолжаем
     function afterManual() {
       if (!C.autoplay) return;
       if (C.stopOnInteraction) { stopAuto(true); return; }
       // в режиме без цикла у конца ленты автопрокрутка не возобновляется
-      if (!C.loop && slider.realIndex >= maxIndex()) return;
+      if (!loopMode && pos >= maxIndex()) return;
       if (!autoTimer) startAuto();
     }
 
-    // Затемнение стрелок на краях (только в режиме без цикла)
+    // Затемнение стрелок на краях (только в режиме без цикла:
+    // при бесконечной прокрутке стрелки не гаснут никогда)
     function paintDisabled(idx) {
+      if (loopMode) return;
       var m = maxIndex();
-      if (arrowPrev) arrowPrev.classList.toggle('swiper-button-disabled', !C.loop && idx <= 0);
-      if (arrowNext) arrowNext.classList.toggle('swiper-button-disabled', !C.loop && idx >= m);
-    }
-
-    function stepTo(target) {
-      var m = maxIndex();
-      var t = Math.max(0, Math.min(m, Math.round(target)));
-      if (t === slider.realIndex) { paintDisabled(t); return; }
-      slider.slideTo(t, animSpeed);
-      paintDisabled(t);
-      if (!C.loop && t >= m) stopAuto(false); // дошли до конца ленты
+      if (arrowPrev) arrowPrev.classList.toggle('swiper-button-disabled', idx <= 0);
+      if (arrowNext) arrowNext.classList.toggle('swiper-button-disabled', idx >= m);
     }
 
     function go(dir, isAuto) {
-      var m = maxIndex();
-      var target = slider.realIndex + dir;
-      if (C.loop) {
-        // бесконечная прокрутка: за краем ленты — возврат на другой конец
-        if (target > m) target = 0;       // после последней позиции — к первой карточке
-        else if (target < 0) target = m;  // назад с первой — к последней позиции
+      if (loopMode) {
+        normalizePos();
+        slideIdx(pos + dir, animSpeed, false);
+        syncDots();
+      } else {
+        var m = maxIndex();
+        var t = Math.max(0, Math.min(m, Math.round(pos) + dir));
+        if (t === pos) { paintDisabled(t); return; }
+        slideIdx(t, animSpeed, false);
+        paintDisabled(t);
+        if (t >= m) stopAuto(false); // дошли до конца ленты
       }
-      stepTo(target);
       if (!isAuto) afterManual();
     }
 
@@ -799,6 +822,14 @@
     slider.on('touchStart', function () { stopAuto(false); });
     slider.on('touchEnd', function () { afterManual(); });
 
+    // После перетягивания Swiper сам выбирает позицию — подтягиваем
+    // наш счётчик к нему. В режиме цикла позиция тоже остаётся
+    // корректной: боковые копии выглядят в точности как оригинал.
+    slider.on('slideChange', function () {
+      pos = slider.realIndex;
+      syncDots();
+    });
+
     // Пауза автопрокрутки при наведении на слайдер
     if (C.autoplay && C.pauseOnHover) {
       zone.addEventListener('mouseenter', function () { stopAuto(false); });
@@ -806,14 +837,21 @@
     }
     startAuto();
 
-    // ---- Точки: по числу позиций ленты.
-    // Когда на экране несколько карточек сразу, позиций меньше, чем
-    // карточек: 5 карточек по 3 = 3 позиции. При смене устройства
-    // число точек пересчитывается (на смартфоне — по числу карточек).
+    // ---- Точки ----
+    // С бесконечной прокруткой: точек ровно по числу карточек,
+    // активная — текущая карточка. Без цикла: точек по числу
+    // позиций ленты (5 карточек по 3 в ряд — три позиции).
     var bullets = [];
     var lastDotCount = -1;
+
+    function activeCard() {
+      var p = pos % N;
+      if (p < 0) p += N;
+      return p;
+    }
+
     function syncDots() {
-      var count = maxIndex() + 1;
+      var count = loopMode ? N : maxIndex() + 1;
       if (count !== lastDotCount) {
         lastDotCount = count;
         if (dotsBox) {
@@ -828,31 +866,52 @@
         }
       }
       if (bullets.length) {
-        var idx = Math.max(0, Math.min(bullets.length - 1, slider.realIndex));
+        var idx = loopMode ? activeCard() : Math.max(0, Math.min(bullets.length - 1, pos));
         for (var j = 0; j < bullets.length; j++) {
           bullets[j].classList.toggle('swiper-pagination-bullet-active', j === idx);
         }
       }
-      paintDisabled(slider.realIndex);
+      paintDisabled(pos);
     }
-
-    slider.on('slideChange', syncDots);
-    syncDots();
 
     if (dotsBox) {
       dotsBox.addEventListener('click', function (evt) {
         var clicked = evt.target;
         if (!clicked.classList.contains('swiper-pagination-bullet')) return;
-        var pos = bullets.indexOf(clicked);
-        if (pos < 0) return;
-        stepTo(pos);
+        var i = bullets.indexOf(clicked);
+        if (i < 0) return;
+        if (loopMode) {
+          // короткий путь к карточке: вперёд или назад — как ближе
+          var d = i - activeCard();
+          if (d > N / 2) d -= N;
+          else if (d < -N / 2) d += N;
+          if (d === 0) return;
+          normalizePos();
+          slideIdx(pos + d, animSpeed, false);
+          syncDots();
+        } else {
+          var t = Math.max(0, Math.min(maxIndex(), i));
+          if (t === pos) return;
+          slideIdx(t, animSpeed, false);
+          paintDisabled(t);
+          if (t >= maxIndex()) stopAuto(false);
+        }
         afterManual();
       });
     }
 
-    // Пересчёт геометрии и числа точек при изменении окна
-    window.addEventListener('resize', function () { slider.update(); syncDots(); });
-    slider.on('breakpoint', function () { setTimeout(syncDots, 0); });
+    // Пересчёт при изменении окна: после пересчёта Swiper возвращаем
+    // ленту на нашу позицию и обновляем точки
+    function onRebuild() {
+      slider.update();
+      if (!loopMode && pos > maxIndex()) pos = maxIndex();
+      slider.slideTo(pos, 0, false);
+      syncDots();
+    }
+    window.addEventListener('resize', onRebuild);
+    slider.on('breakpoint', function () { setTimeout(onRebuild, 0); });
+
+    syncDots();
   }
 
   // Запуск после готовности DOM
@@ -1063,8 +1122,8 @@
     C.sliders.forEach(function (S, i) { out += demoSection(S, i); });
     out += '<p style="text-align:center;color:#878f9c;font-size:13px;margin:2px 0 0">' +
       'Превью живое: стрелки, точки, автопрокрутка и перетягивание карточек работают. ' +
-      'Точек — по числу позиций ленты, при 3 карточках в ряд для 5 карточек их три. ' +
-      'В окне превью всегда показано десктопное количество карточек.</p>';
+      'С бесконечной прокруткой лента крутится без остановки, точек — по числу карточек. ' +
+      'Без цикла точек — по числу позиций ленты.</p>';
     return out + zsGenerate(v, true);
   }
 
