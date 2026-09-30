@@ -1,28 +1,29 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.7
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.8
    Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.7" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.8" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
    Ядро: каркас v1.7 (липкое превью, открепление, авто-высота,
    ловец ошибок) + устойчивость к динамической подгрузке ЛК.
-   Изменения v3.7 (откат к стабильному движку v3.3 + два фикса):
-   - БЕСКОНЕЧНАЯ ПРОКРУТКА теперь бесконечна и при перетягивании
-     мышью: лента из трёх одинаковых наборов карточек; после
-     каждого шага И после перетягивания (по завершении анимации)
-     она «тихо» (без анимации, ровно на ширину набора) удерживается
-     в среднем наборе — вид не меняется, края ленты недостижимы.
-     Раньше при перетягивании лента уезжала в боковую копию
-     до края и там заканчивалась
-   - БЕЗ ЦИКЛА: стабильная штатная механика — лента доезжает до
-     конца (последние карточки видны целиком), стрелки гаснут на
-     конечной позиции, точки = числу позиций ленты, всё
-     согласовано (стрелки/точки/перетягивание). Попытки v3.4–v3.6
-     сделать «точка = карточка» (ручные сдвиги, пустышки) удалены
-   - при выключенной бесконечной прокрутке блок настроек «Точки»
-     скрывается из панели (точки работают в режиме «по позициям»);
-     тумблер прокрутки перерисовывает панель
+   Изменения v3.8 (принудительное закрепление превью):
+   - закрепление переведено с CSS position:sticky на JS: sticky
+     молча ломается, если у предка стоит overflow:hidden/auto или
+     transform — Zero Block часто оборачивает T123 в такие
+     контейнеры, из-за чего на одних страницах превью
+     закреплялось, на других нет
+   - при скролле движок сам управляет позицией карточки превью:
+     обычный поток до точки закрепления → position:fixed в зоне
+     закрепления → position:absolute у низа колонки настроек
+     после её конца. fixed от overflow предков не зависит,
+     поведение одинаково на любой странице
+   - «Открепить превью» работает как раньше (авто-высота)
+   Изменения v3.7: откат к стабильному движку v3.3; бесконечная
+   прокрутка бесконечна и при перетягивании мышью (удержание
+   ленты в среднем наборе после каждого шага и свайпа); при
+   выключенной бесконечной прокрутке блок настроек «Точки»
+   скрывается из панели.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -154,15 +155,99 @@
   var pinned = true;
   try { pinned = localStorage.getItem('cxb:pin') !== '0'; } catch (e) {}
 
+  /* ==========================================================
+     ПРИНУДИТЕЛЬНОЕ ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (вместо CSS sticky).
+     position:sticky молча ломается, если у любого предка стоит
+     overflow:hidden/auto или transform — Zero Block часто
+     оборачивает T123 в такие контейнеры, из-за чего на одних
+     страницах закрепление работало, на других нет. Здесь позицию
+     карточки превью на каждом скролле выставляет JS:
+     - обычный поток, пока не доехали до точки закрепления
+     - position:fixed в зоне закрепления (от overflow предков
+       не зависит — поведение одинаково на любой странице)
+     - position:absolute у низа колонки настроек после её конца
+     ========================================================== */
+  var pinScheduled = false;
+
+  function pinTopLimit() {
+    return window.innerWidth <= 920 ? 80 : 90; /* как в CSS .cx-pinned */
+  }
+  function pinBoxHeight() {
+    return Math.max(280, window.innerHeight - pinTopLimit() - 20);
+  }
+
+  /* снять принудительную позицию (обычный поток) */
+  function forcePinReset() {
+    if (!el || !el.frameBox) return;
+    el.frameBox.style.position = 'static';
+    el.frameBox.style.top = '';
+    el.frameBox.style.bottom = '';
+    el.frameBox.style.left = '';
+    el.frameBox.style.width = '';
+    el.frameBox.style.height = '';
+  }
+
+  function forcePinTick() {
+    if (!pinned || !el || !el.frameBox) return;
+    var box = el.frameBox;
+    var col = box.parentNode;
+    if (!col) return;
+    if (getComputedStyle(col).position === 'static') col.style.position = 'relative';
+
+    var topLimit = pinTopLimit();
+    var h = pinBoxHeight();
+    var colR = col.getBoundingClientRect();
+
+    if (colR.height < h + 40 || colR.top > topLimit) {
+      /* колонка короткая или точка закрепления ещё выше — обычный поток */
+      forcePinReset();
+    } else if (colR.bottom - topLimit >= h) {
+      /* зона закрепления */
+      box.style.position = 'fixed';
+      box.style.top = topLimit + 'px';
+      box.style.bottom = 'auto';
+      box.style.left = colR.left + 'px';
+      box.style.width = colR.width + 'px';
+      box.style.height = h + 'px';
+    } else {
+      /* настройки закончились — паркуем превью у низа колонки */
+      box.style.position = 'absolute';
+      box.style.top = 'auto';
+      box.style.bottom = '0';
+      box.style.left = '0';
+      box.style.width = '100%';
+      box.style.height = h + 'px';
+    }
+  }
+
+  function schedulePinTick() {
+    if (pinScheduled) return;
+    pinScheduled = true;
+    requestAnimationFrame(function () {
+      pinScheduled = false;
+      forcePinTick();
+    });
+  }
+
+  function bindPinWatchers() {
+    if (document.__cxPinWatch) return;
+    document.__cxPinWatch = true;
+    window.addEventListener('scroll', schedulePinTick, false);
+    window.addEventListener('resize', schedulePinTick, false);
+  }
+
   function setPinned(p) {
     pinned = p;
     el.frameBox.classList.toggle('cx-pinned', p);
     el.pin.textContent = p ? 'Открепить превью' : 'Закрепить превью';
     el.frame.style.height = '';
     if (p) {
-      el.frame.setAttribute('data-no-autosize', '1'); /* высоту задаёт CSS, скролл внутри */
+      el.frame.setAttribute('data-no-autosize', '1'); /* высоту задаёт закрепление, скролл внутри */
+      bindPinWatchers();
+      schedulePinTick();
     } else {
       el.frame.removeAttribute('data-no-autosize');
+      forcePinReset();
       setTimeout(autoSizeFrame, 60);
     }
     try { localStorage.setItem('cxb:pin', p ? '1' : '0'); } catch (e) {}
@@ -170,7 +255,7 @@
 
   /* ---- авто-высота превью (только в откреплённом режиме) ---- */
   function autoSizeFrame() {
-    if (pinned) return; /* в закреплённом режиме высоту задаёт CSS */
+    if (pinned) return; /* в закреплённом режиме высоту задаёт закрепление */
     try {
       var doc = el.frame.contentDocument;
       if (!doc || !doc.body) return;
@@ -201,7 +286,7 @@
       'b.textContent="Ошибка в коде мода: "+e.message;' +
       '(document.body||document.documentElement).appendChild(b);});' + S_CLOSE;
     /* Авто-высота: работает только когда превью откреплено
-       (в закреплённом режиме высоту задаёт CSS, скролл внутри iframe) */
+       (в закреплённом режиме высоту задаёт закрепление, скролл внутри iframe) */
     var autoH =
       '<script>(function(){' +
       'var t=false;' +
@@ -279,6 +364,8 @@
       h += '</div></details>';
     });
     el.settings.innerHTML = h;
+    /* высота колонки настроек изменилась — пересчитать закрепление */
+    setTimeout(schedulePinTick, 0);
   }
 
   function onFieldInput(e) {
@@ -380,6 +467,7 @@
     bindOnce(el.frame, 'load', function () {
       setTimeout(autoSizeFrame, 50);
       setTimeout(autoSizeFrame, 350);
+      schedulePinTick(); /* высота колонки могла измениться — пересчитать закрепление */
     });
 
     if (!document.__cxEscBound) {
