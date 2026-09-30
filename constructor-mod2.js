@@ -1,25 +1,29 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.4
+   copilp.ru DEV MODS · Конструктор «Колесо подарков» · v2.5
    Файл: constructor-mod2.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.4" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-mod2.js?v=2.5" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Изменения v2.4:
-   - закрепление превью переделано:
-     · блок «Как подключить» переносится под сетку на всю ширину
-       (превью больше не перекрывает контент под собой);
-     · при включённом закреплении правая колонка растягивается на
-       высоту левой — sticky-превью едет по всей высоте настроек,
-       не «останавливается» и не уходит со скроллом;
-     · отступ закрепления сверху 90px (под меню Тильды);
-     · при выключении кнопкой колонка возвращается к обычному виду;
-   - мобильная раскладка (≤920px) — как раньше, без закрепления.
+   Изменения v2.5:
+   - закрепление превью переделано на ПРИНУДИТЕЛЬНОЕ:
+     вместо position:sticky (зависел от обёрток Тильды —
+     на страницах с overflow:hidden у предков не работал)
+     используется position:fixed, которым управляет скрипт:
+     карточка держится на STICKY_TOP от верха экрана и
+     ограничивается правой колонкой (доезжает до конца
+     настроек и уезжает вместе с ней). Работает на любой
+     странице независимо от вёрстки обёрток.
+   - правая колонка растягивается на высоту левой,
+     «Как подключить» — под сеткой на всю ширину (из v2.4);
+   - мобила (≤920px) — без закрепления, как раньше.
+   Изменения v2.4: перенос «Как подключить» под сетку,
+   растяжение правой колонки, STICKY_TOP = 90.
    Изменения v2.3: sticky-превью, кнопка «Закрепить превью».
-   Изменения v2.2: порядок групп панели, усиленное скрытие формы
-   Тильды (авточинка класса с точкой, наблюдатель, debug-логи).
-   Изменения v2.1: фикс привязки обработчиков панели, постоянный
-   MutationObserver.
+   Изменения v2.2: порядок групп панели, усиленное скрытие
+   формы Тильды (авточинка класса с точкой, наблюдатель).
+   Изменения v2.1: фикс привязки обработчиков панели,
+   постоянный MutationObserver.
    Ядро превью — 1:1 из версии без ЛК: виртуальный экран
    390–1920, зум Вписать/50/75/100, «В новой вкладке».
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
@@ -41,6 +45,9 @@
   var toastTimer = null;
   var currentCode = '';
   var el = null;
+
+  /* состояние принудительного закрепления (v2.5) */
+  var pinState = { active: false, card: null, col: null, raf: 0 };
 
   var wantMod = null;
   try { wantMod = new URLSearchParams(window.location.search).get('mod'); } catch (e) {}
@@ -187,6 +194,7 @@
     el.vclip.style.width = Math.round(pv.vw * k) + 'px';
     el.vclip.style.height = Math.round(pvH * k) + 'px';
     syncPvControls();
+    pinRecalc(); /* высота карточки изменилась — пересчитать закрепление */
   }
 
   function currentDemoBody() {
@@ -272,32 +280,83 @@
   }
 
   /* ================================================================
-     ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (v2.4).
-     1) «Как подключить» переносится под сетку — превью нечего
-        перекрывать.
-     2) При включённом закреплении правая колонка растягивается на
-        высоту левой (.cx-grid.cx-stretch) — sticky-превью едет по
-        всей высоте настроек.
-     3) Отступ сверху — STICKY_TOP (90px, под меню Тильды).
-     Стили инжектируются отсюда — T123 менять не нужно.
+     ПРИНУДИТЕЛЬНОЕ ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (v2.5).
+     position:sticky зависел от обёрток Тильды: на страницах, где
+     у предков стоит overflow:hidden/auto, карточка прилипала к
+     невидимому контейнеру и «не закреплялась». Теперь скрипт сам
+     управляет позицией через position:fixed:
+       - карточка держится на STICKY_TOP от верха окна;
+       - ограничена правой колонкой: не выезжает за её начало,
+         доезжает до её конца и уезжает вместе с ней;
+       - ширина и горизонталь берутся из колонки на каждом кадре;
+       - на ≤920px закрепление выключается (мобила как раньше).
+     Работает одинаково на любой странице.
      ================================================================ */
-  function injectStickyCss() {
-    if (document.getElementById('cxStickyStyle')) return;
+  function injectPinCss() {
+    if (document.getElementById('cxPinStyle')) return;
     var st = document.createElement('style');
-    st.id = 'cxStickyStyle';
+    st.id = 'cxPinStyle';
     st.textContent =
-      '/* DEV MODS: закрепление превью (v2.4) */' +
+      '/* DEV MODS: принудительное закрепление превью (v2.5) */' +
       '.cx-grid.cx-stretch{align-items:stretch}' +
-      '.cx-frame-box.cx-sticky{position:sticky;top:' + STICKY_TOP + 'px;z-index:20;' +
-      'max-height:calc(100vh - ' + (STICKY_TOP + 12) + 'px);display:flex;flex-direction:column}' +
-      '.cx-frame-box.cx-sticky .cx-vscroll{flex:1 1 auto;min-height:0;overflow-y:auto}' +
+      '.cx-frame-box.cx-pinned{max-height:calc(100vh - ' + (STICKY_TOP + 12) + 'px);display:flex;flex-direction:column}' +
+      '.cx-frame-box.cx-pinned .cx-vscroll{flex:1 1 auto;min-height:0;overflow-y:auto}' +
       '@media(max-width:920px){' +
       '.cx-grid.cx-stretch{align-items:start}' +
-      '.cx-frame-box.cx-sticky{position:static;max-height:none;display:block}' +
-      '.cx-frame-box.cx-sticky .cx-vscroll{overflow-y:visible}' +
+      '.cx-frame-box.cx-pinned{max-height:none;display:block}' +
+      '.cx-frame-box.cx-pinned .cx-vscroll{overflow-y:visible}' +
       '}' +
       '.cx-sticky-btn{flex:none}';
     document.head.appendChild(st);
+  }
+
+  function pinClearStyles() {
+    if (!pinState.card) return;
+    var c = pinState.card;
+    c.style.position = '';
+    c.style.top = '';
+    c.style.left = '';
+    c.style.width = '';
+    c.style.zIndex = '';
+  }
+
+  function pinRecalc() {
+    if (!pinState.active || !pinState.card || !pinState.col) return;
+    var card = pinState.card, col = pinState.col;
+    /* на мобиле закрепление выключено */
+    if (window.innerWidth <= 920) { pinClearStyles(); return; }
+    var r = col.getBoundingClientRect();
+    var h = card.offsetHeight || 0;
+    var desired = STICKY_TOP;
+    var maxTop = r.bottom - h - 12; /* ниже нельзя — вылезет за конец колонки */
+    var top;
+    if (r.top > desired) {
+      /* колонка ещё не доехала до линии закрепления — карточка на своём месте */
+      top = r.top;
+    } else {
+      /* закрепление; у конца колонки карточка уезжает вместе с ней */
+      top = Math.min(desired, maxTop);
+    }
+    if (top < r.top) top = r.top; /* карточка не выше начала колонки */
+    card.style.position = 'fixed';
+    card.style.top = Math.round(top) + 'px';
+    card.style.left = Math.round(r.left) + 'px';
+    card.style.width = Math.round(r.width) + 'px';
+    card.style.zIndex = '20';
+  }
+
+  /* слушатели скролла/ресайза — глобально ровно один раз */
+  if (!window.__cxPinBound) {
+    window.__cxPinBound = true;
+    var pinSchedule = function () {
+      if (pinState.raf) return;
+      pinState.raf = (window.requestAnimationFrame || function (f) { setTimeout(f, 16); })(function () {
+        pinState.raf = 0;
+        pinRecalc();
+      });
+    };
+    window.addEventListener('scroll', pinSchedule, true); /* capture — ловим и скролл внутренних контейнеров */
+    window.addEventListener('resize', pinSchedule);
   }
 
   /* ============ панель настроек ============ */
@@ -407,7 +466,7 @@
         !e.vscroll || !e.vclip || !e.vw || !e.zoom || !e.tabbtn) return false;
     el = e;
 
-    injectStickyCss();
+    injectPinCss();
 
     /* этот экземпляр разметки уже инициализирован.
        Флаг другой (__cxInit), не тот, что в bindOnce (__cxBound) */
@@ -449,11 +508,10 @@
     });
     bindOnce(el.tabbtn, 'click', openTab);
 
-    /* --- закрепление превью (v2.4) ---
-       1) «Как подключить» — под сетку на всю ширину (идемпотентно:
-          если ЛК пересоздаст разметку, перенос повторится).
-       2) Кнопка «Закрепить превью»: sticky-карточка + растяжение
-          правой колонки под высоту левой. T123 не трогаем. */
+    /* --- принудительное закрепление превью (v2.5) ---
+       «Как подключить» — под сетку на всю ширину (идемпотентно:
+       если ЛК пересоздаст разметку, перенос повторится).
+       Кнопка вкл/выкл; состояние запоминается; по умолчанию ВКЛ. */
     var cardBox = (el.frame.closest && el.frame.closest('.cx-frame-box')) ||
                   document.querySelector('.cx-frame-box');
     var rightCol = cardBox ? cardBox.parentNode : null;
@@ -468,25 +526,34 @@
       grid.parentNode.insertBefore(el.connect, grid.nextSibling);
     }
 
-    if (cardBox) {
+    if (cardBox && rightCol) {
       var sBtn = document.createElement('button');
       sBtn.type = 'button';
       sBtn.className = 'cx-btn cx-sticky-btn';
       sBtn.textContent = 'Закрепить превью';
       el.tabbtn.parentNode.insertBefore(sBtn, el.tabbtn);
 
-      var stickyApply = function (on) {
-        cardBox.classList.toggle('cx-sticky', !!on);
+      var pinApply = function (on) {
+        cardBox.classList.toggle('cx-pinned', !!on);
         if (grid) grid.classList.toggle('cx-stretch', !!on);
         sBtn.classList.toggle('cx-btn-primary', !!on);
         sBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (on) {
+          pinState.active = true;
+          pinState.card = cardBox;
+          pinState.col = rightCol;
+          pinRecalc();
+        } else {
+          pinState.active = false;
+          pinClearStyles();
+        }
       };
-      var stickyOn = true;
-      try { stickyOn = localStorage.getItem('cxb:sticky') !== '0'; } catch (e) {}
-      stickyApply(stickyOn);
+      var pinOn = true;
+      try { pinOn = localStorage.getItem('cxb:sticky') !== '0'; } catch (e) {}
+      pinApply(pinOn);
       sBtn.addEventListener('click', function () {
-        var on = !cardBox.classList.contains('cx-sticky');
-        stickyApply(on);
+        var on = !pinState.active;
+        pinApply(on);
         try { localStorage.setItem('cxb:sticky', on ? '1' : '0'); } catch (e) {}
       });
     }
@@ -514,7 +581,7 @@
        разметки инициализируется автоматически */
     var mo = new MutationObserver(function () { init(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
-    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.4)');
+    if (ok) console.info('[DEV MODS] Конструктор инициализирован (v2.5)');
     else console.info('[DEV MODS] Разметки ещё нет — инициализация по появлению блока');
   }
 
