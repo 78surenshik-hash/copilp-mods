@@ -1,29 +1,24 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.8
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.9
    Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.8" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.9" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Ядро: каркас v1.7 (липкое превью, открепление, авто-высота,
-   ловец ошибок) + устойчивость к динамической подгрузке ЛК.
-   Изменения v3.8 (принудительное закрепление превью):
-   - закрепление переведено с CSS position:sticky на JS: sticky
-     молча ломается, если у предка стоит overflow:hidden/auto или
-     transform — Zero Block часто оборачивает T123 в такие
-     контейнеры, из-за чего на одних страницах превью
-     закреплялось, на других нет
-   - при скролле движок сам управляет позицией карточки превью:
-     обычный поток до точки закрепления → position:fixed в зоне
-     закрепления → position:absolute у низа колонки настроек
-     после её конца. fixed от overflow предков не зависит,
-     поведение одинаково на любой странице
-   - «Открепить превью» работает как раньше (авто-высота)
-   Изменения v3.7: откат к стабильному движку v3.3; бесконечная
-   прокрутка бесконечна и при перетягивании мышью (удержание
-   ленты в среднем наборе после каждого шага и свайпа); при
-   выключенной бесконечной прокрутке блок настроек «Точки»
-   скрывается из панели.
+   Изменения v3.9 (критический фикс — отказ от одного CDN):
+   - сгенерированный код больше не зависит от одного источника:
+     Swiper 8.4.7 загружается по цепочке источников — свой
+     GitHub Pages → jsdelivr → cdnjs → unpkg; если источник
+     недоступен (перебои/блокировки CDN), автоматически
+     подхватывается следующий. Раньше код ходил только на
+     jsdelivr — его сбой «убивал» все слайдеры разом и в превью,
+     и на клиентских страницах
+   - рекомендуется один раз залить в корень репозитория файлы
+     swiper-bundle.min.js и swiper-bundle.min.css (Swiper 8.4.7)
+   Изменения v3.8: закрепление превью переведено с CSS sticky
+   на JS (не ломается от overflow предков в Zero Block).
+   Изменения v3.7: бесконечная прокрутка бесконечна и при
+   перетягивании мышью; без циклы блок настроек «Точки» скрыт.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -159,24 +154,21 @@
      ПРИНУДИТЕЛЬНОЕ ЗАКРЕПЛЕНИЕ ПРЕВЬЮ (вместо CSS sticky).
      position:sticky молча ломается, если у любого предка стоит
      overflow:hidden/auto или transform — Zero Block часто
-     оборачивает T123 в такие контейнеры, из-за чего на одних
-     страницах закрепление работало, на других нет. Здесь позицию
-     карточки превью на каждом скролле выставляет JS:
+     оборачивает T123 в такие контейнеры. Позицию карточки
+     превью на каждом скролле выставляет JS:
      - обычный поток, пока не доехали до точки закрепления
-     - position:fixed в зоне закрепления (от overflow предков
-       не зависит — поведение одинаково на любой странице)
+     - position:fixed в зоне закрепления
      - position:absolute у низа колонки настроек после её конца
      ========================================================== */
   var pinScheduled = false;
 
   function pinTopLimit() {
-    return window.innerWidth <= 920 ? 80 : 90; /* как в CSS .cx-pinned */
+    return window.innerWidth <= 920 ? 80 : 90;
   }
   function pinBoxHeight() {
     return Math.max(280, window.innerHeight - pinTopLimit() - 20);
   }
 
-  /* снять принудительную позицию (обычный поток) */
   function forcePinReset() {
     if (!el || !el.frameBox) return;
     el.frameBox.style.position = 'static';
@@ -199,10 +191,8 @@
     var colR = col.getBoundingClientRect();
 
     if (colR.height < h + 40 || colR.top > topLimit) {
-      /* колонка короткая или точка закрепления ещё выше — обычный поток */
       forcePinReset();
     } else if (colR.bottom - topLimit >= h) {
-      /* зона закрепления */
       box.style.position = 'fixed';
       box.style.top = topLimit + 'px';
       box.style.bottom = 'auto';
@@ -210,7 +200,6 @@
       box.style.width = colR.width + 'px';
       box.style.height = h + 'px';
     } else {
-      /* настройки закончились — паркуем превью у низа колонки */
       box.style.position = 'absolute';
       box.style.top = 'auto';
       box.style.bottom = '0';
@@ -242,7 +231,7 @@
     el.pin.textContent = p ? 'Открепить превью' : 'Закрепить превью';
     el.frame.style.height = '';
     if (p) {
-      el.frame.setAttribute('data-no-autosize', '1'); /* высоту задаёт закрепление, скролл внутри */
+      el.frame.setAttribute('data-no-autosize', '1');
       bindPinWatchers();
       schedulePinTick();
     } else {
@@ -255,14 +244,14 @@
 
   /* ---- авто-высота превью (только в откреплённом режиме) ---- */
   function autoSizeFrame() {
-    if (pinned) return; /* в закреплённом режиме высоту задаёт закрепление */
+    if (pinned) return;
     try {
       var doc = el.frame.contentDocument;
       if (!doc || !doc.body) return;
       var col = doc.querySelector('.cxd-col');
       var h = col ? col.getBoundingClientRect().height : 0;
       if (!h) h = doc.body.scrollHeight;
-      h = Math.ceil(h) + 44; /* паддинги body 22+22 */
+      h = Math.ceil(h) + 44;
       if (h >= 160) el.frame.style.height = h + 'px';
     } catch (e) {}
   }
@@ -275,8 +264,6 @@
     } catch (e) {
       body = '<pre style="color:#c0392b;white-space:pre-wrap;font:12px/1.5 monospace">Ошибка демо: ' + esc(e.message) + '</pre>';
     }
-    /* Ловец ошибок: шум браузера ResizeObserver не показываем,
-       реальные ошибки мода — показываем плашкой */
     var errTrap =
       '<script>window.addEventListener("error",function(e){' +
       'if(e&&e.message&&e.message.indexOf("ResizeObserver")>-1)return;' +
@@ -285,8 +272,6 @@
       'font:12px/1.4 monospace;padding:8px 12px;z-index:99999";' +
       'b.textContent="Ошибка в коде мода: "+e.message;' +
       '(document.body||document.documentElement).appendChild(b);});' + S_CLOSE;
-    /* Авто-высота: работает только когда превью откреплено
-       (в закреплённом режиме высоту задаёт закрепление, скролл внутри iframe) */
     var autoH =
       '<script>(function(){' +
       'var t=false;' +
@@ -316,7 +301,7 @@
   }
 
   function renderField(f) {
-    if (f.showIf && !f.showIf(state)) return ''; /* поле скрыто при текущих настройках */
+    if (f.showIf && !f.showIf(state)) return '';
     var cls = f.type === 'color' ? 'cx-field-color'
             : f.type === 'toggle' ? 'cx-field-toggle'
             : f.type === 'range' ? 'cx-field-range'
@@ -357,14 +342,13 @@
     var m = mods[activeId];
     var h = '<div class="cx-mod-head"><h3>' + esc(m.title) + '</h3><p>' + esc(m.desc) + '</p></div>';
     m.fields.forEach(function (g) {
-      if (g.showIf && !g.showIf(state)) return; /* группа скрыта при текущих настройках */
+      if (g.showIf && !g.showIf(state)) return;
       var open = (g.open === false) ? '' : ' open';
       h += '<details class="cx-group"' + open + '><summary>' + esc(g.title) + '<span class="cx-caret">▾</span></summary><div class="cx-group-body">';
       g.items.forEach(function (f) { h += renderField(f); });
       h += '</div></details>';
     });
     el.settings.innerHTML = h;
-    /* высота колонки настроек изменилась — пересчитать закрепление */
     setTimeout(schedulePinTick, 0);
   }
 
@@ -383,7 +367,7 @@
       if (out) out.textContent = rangeOutText(f, v);
     } else if (f.type === 'color') {
       var hx = hex(t.value);
-      if (!hx) return; /* ждём валидный hex из текстового поля */
+      if (!hx) return;
       state[key] = hx;
       var sibs = el.settings.querySelectorAll('input[data-key="' + key + '"]');
       for (var i = 0; i < sibs.length; i++) { if (sibs[i] !== t) sibs[i].value = hx; }
@@ -391,7 +375,7 @@
       state[key] = t.value;
     }
     save();
-    if (f.rerender) renderSettings(); /* перерисовать панель (появить/скрыть зависимые поля и группы) */
+    if (f.rerender) renderSettings();
     schedulePreview();
   }
 
@@ -440,7 +424,6 @@
 
     setPinned(pinned);
 
-    /* делегирование: панель перерисовывается, слушатели висят на контейнере */
     bindOnce(el.settings, 'input', onFieldInput);
     bindOnce(el.settings, 'change', onFieldInput);
 
@@ -467,7 +450,7 @@
     bindOnce(el.frame, 'load', function () {
       setTimeout(autoSizeFrame, 50);
       setTimeout(autoSizeFrame, 350);
-      schedulePinTick(); /* высота колонки могла измениться — пересчитать закрепление */
+      schedulePinTick();
     });
 
     if (!document.__cxEscBound) {
@@ -521,7 +504,7 @@
   /* Набор настроек одного слайдера; p — префикс ключей ('', 's2_', 's3_') */
   function sliderGroups(p, name, showFn) {
     var k = function (key) { return p + key; };
-    var collapsed = p !== ''; /* доп. слайдеры — свёрнуты по умолчанию */
+    var collapsed = p !== '';
     return [
       { title: name + ' · карточки', showIf: showFn, open: !collapsed, items: [
         { key: k('slidesDesktop'), type: 'range', label: 'Карточек в ряд — десктоп (от 1200px)', def: 3, min: 1, max: 8, step: 1, newRow: true },
@@ -606,8 +589,6 @@
 `;
 
   function sliderCfgJs(S, force) {
-    /* force — только для превью: показывает десктопное количество
-       карточек на любой ширине окна. В генерируемом коде force=false. */
     var laptop = force ? S.slidesDesktop : S.slidesLaptop;
     var tablet = force ? S.slidesDesktop : S.slidesTablet;
     var mobile = force ? S.slidesDesktop : S.slidesMobile;
@@ -650,31 +631,76 @@
   var MOD_BODY = `
   // ------------------- Загрузка Swiper 8.4.7 -------------------
   // Версия зафиксирована намеренно: у Swiper 9+ переписан режим
-  // loop (слайды перетаскиваются, а не клонируются), и на карточках
-  // Zero Block он «залипает» на втором шаге. 8.4.7 проверена.
-  // Библиотека загружается один раз и используется всеми слайдерами.
-  var SWIPER_CSS = 'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.css';
-  var SWIPER_JS = 'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.js';
+  // loop, и на карточках Zero Block он «залипает» на втором шаге.
+  //
+  // ИСТОЧНИКОВ НЕСКОЛЬКО: если первый недоступен (перебои или
+  // блокировки CDN), автоматически подхватывается следующий.
+  // Слайдер не зависит от одного CDN и не может «умереть» разом
+  // из-за его сбоя. Первый источник — копия библиотеки на
+  // GitHub Pages проекта.
+  var SWIPER_CSS = [
+    'https://78surenshik-hash.github.io/copilp-mods/swiper-bundle.min.css',
+    'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.css',
+    'https://cdnjs.cloudflare.com/ajax/libs/Swiper/8.4.7/swiper-bundle.min.css',
+    'https://unpkg.com/swiper@8.4.7/swiper-bundle.min.css'
+  ];
+  var SWIPER_JS = [
+    'https://78surenshik-hash.github.io/copilp-mods/swiper-bundle.min.js',
+    'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/Swiper/8.4.7/swiper-bundle.min.js',
+    'https://unpkg.com/swiper@8.4.7/swiper-bundle.min.js'
+  ];
+
+  // Пробует источники по очереди, пока один не загрузится
+  function loadOne(list, i, make, ok, fail) {
+    if (i >= list.length) { fail(); return; }
+    var node = make(list[i]);
+    node.onload = function () { ok(); };
+    node.onerror = function () {
+      try { if (node.parentNode) node.parentNode.removeChild(node); } catch (err) {}
+      loadOne(list, i + 1, make, ok, fail);
+    };
+    (document.head || document.documentElement).appendChild(node);
+  }
 
   function loadSwiper(cb) {
-    // Стили Swiper подключаем ВСЕГДА: в них задан transition ленты,
-    // по которому библиотека отслеживает завершение анимации,
-    // а также стили 3D-эффектов и теней слайдов.
-    if (!document.querySelector('link[data-dm-swiper]')) {
-      var l = document.createElement('link');
-      l.rel = 'stylesheet';
-      l.href = SWIPER_CSS;
-      l.setAttribute('data-dm-swiper', '1');
-      document.head.appendChild(l);
-    }
     if (window.Swiper) { cb(); return; }
-    var s = document.createElement('script');
-    s.src = SWIPER_JS;
-    s.onload = function () { cb(); };
-    s.onerror = function () {
-      console.warn('[DEV MODS] Не удалось загрузить Swiper — слайдеры не запущены');
-    };
-    (document.head || document.documentElement).appendChild(s);
+    // библиотеку уже грузит другая копия сниппета — дожидаемся её
+    if (window.__dmSwiperWait) {
+      var poll = setInterval(function () {
+        if (window.Swiper) { clearInterval(poll); cb(); }
+      }, 120);
+      setTimeout(function () { clearInterval(poll); }, 12000);
+      return;
+    }
+    window.__dmSwiperWait = true;
+    // Стили: достаточно одного сработавшего источника
+    if (!document.querySelector('link[data-dm-swiper]')) {
+      loadOne(SWIPER_CSS, 0,
+        function (u) {
+          var l = document.createElement('link');
+          l.rel = 'stylesheet';
+          l.setAttribute('data-dm-swiper', '1');
+          l.href = u;
+          return l;
+        },
+        function () {},
+        function () {}
+      );
+    }
+    // Библиотека: по успеху запускаем слайдеры
+    loadOne(SWIPER_JS, 0,
+      function (u) {
+        var s = document.createElement('script');
+        s.src = u;
+        return s;
+      },
+      function () { window.__dmSwiperWait = false; cb(); },
+      function () {
+        window.__dmSwiperWait = false;
+        console.warn('[DEV MODS] Не удалось загрузить Swiper ни из одного источника — слайдеры не запущены');
+      }
+    );
   }
 
   // ------------------- Поиск и запуск слайдеров ----------------
@@ -728,8 +754,9 @@
     // получается три одинаковых набора. Копии неотличимы от оригинала,
     // поэтому «тихие» перескоки между наборами (без анимации, ровно
     // на ширину набора) не видны — лента крутится бесконечно,
-    // без остановок, возвратов и рывков. Встроенный loop Swiper
-    // не используется: он рассинхронизировался на Zero Block.
+    // без остановок, возвратов и рывков, даже при перетягивании
+    // мышью. Встроенный loop Swiper не используется: он
+    // рассинхронизировался на Zero Block.
     var loopMode = !!C.loop;
     if (loopMode) {
       var leftFrag = document.createDocumentFragment();
@@ -763,13 +790,13 @@
     // autoplay, loop) НЕ используются — листанием, точками и циклом
     // управляет собственный движок мода (ниже).
     var setup = {
-      loop: false,            // бесконечность делает движок мода на копиях набора
-      watchOverflow: false,   // не блокировать ленту, если всё влезло
-      observer: true,         // пересчитываться при поздних изменениях Zero Block
+      loop: false,
+      watchOverflow: false,
+      observer: true,
       observeParents: true,
       effect: C.effect,
       speed: animSpeed,
-      simulateTouch: true,    // перетягивание мышью и свайпы
+      simulateTouch: true,
       grabCursor: true,
       resistanceRatio: 0.85
     };
@@ -782,25 +809,21 @@
     if (isCover) setup.coverflowEffect = { rotate: 30, depth: 120, modifier: 1.2, stretch: 0, slideShadows: true };
 
     if (isSlide || isCover) {
-      // Число карточек по устройствам; ширину карточки считает Swiper
-      // (контейнер делится поровну между карточками с учётом отступов)
-      setup.slidesPerView = C.slidesMobile;      // смартфоны: до 640px
-      setup.spaceBetween = C.spaceBetweenMobile; // смартфонный отступ
+      setup.slidesPerView = C.slidesMobile;
+      setup.spaceBetween = C.spaceBetweenMobile;
       setup.breakpoints = {
         640:  { slidesPerView: C.slidesTablet,  spaceBetween: C.spaceBetween },
         960:  { slidesPerView: C.slidesLaptop,  spaceBetween: C.spaceBetween },
         1200: { slidesPerView: C.slidesDesktop, spaceBetween: C.spaceBetween }
       };
-      if (isCover) setup.centeredSlides = true; // активная карточка по центру карусели
+      if (isCover) setup.centeredSlides = true;
     } else {
-      // fade / куб / flip / карточки: один слайд занимает весь контейнер slide-zone
       setup.slidesPerView = 1;
       setup.spaceBetween = 0;
       if (C.effect !== 'fade') setup.centeredSlides = true;
     }
 
-    // Вариант V2 — если у блока дополнительно задан класс uc-cardslider-v2:
-    // один слайд, а на экранах от 1920px — два
+    // Вариант V2 — если у блока дополнительно задан класс uc-cardslider-v2
     if (section.classList.contains('uc-cardslider-v2')) {
       setup.slidesPerView = 1;
       setup.spaceBetween = C.spaceBetweenMobile;
@@ -831,7 +854,6 @@
     var pos = loopMode ? N : 0;
     var lastMove = 0;
 
-    // старт: встаём на первый слайд исходного набора
     slider.slideTo(pos, 0, false);
 
     function isBusy() {
@@ -862,12 +884,9 @@
       else if (pos < N) slideIdx(pos + N, 0, true);
     }
 
-    // Удержание ленты в среднем наборе ПОСЛЕ завершения любой
-    // анимации, включая перетягивание мышью: как только лента
-    // доехала до выбранной свайпом позиции, она мгновенно
-    // перескакивает на эквивалентную позицию среднего набора.
-    // Наборы идентичны — прыжок не виден, зато снова есть запас
-    // карточек с обеих сторон и края ленты недостижимы.
+    // Удержание ленты в среднем наборе после ЛЮБОЙ анимации,
+    // включая перетягивание мышью: прыжок на ширину набора не виден,
+    // зато снова есть запас карточек с обеих сторон.
     slider.on('transitionEnd', function () {
       if (!loopMode) return;
       if (pos >= 2 * N) slideIdx(pos - N, 0, true);
@@ -881,7 +900,7 @@
     function startAuto() {
       if (!C.autoplay || autoTimer || autoStopped) return;
       autoTimer = setInterval(function () {
-        if (isBusy()) return; // предыдущий шаг ещё не доиграл — пропускаем такт
+        if (isBusy()) return;
         go(1, true);
       }, C.autoplayDelay);
     }
@@ -892,13 +911,11 @@
     function afterManual() {
       if (!C.autoplay) return;
       if (C.stopOnInteraction) { stopAuto(true); return; }
-      // в режиме без циклы у конца ленты автопрокрутка не возобновляется
       if (!loopMode && pos >= maxIndex()) return;
       if (!autoTimer) startAuto();
     }
 
-    // Затемнение стрелок на краях (только в режиме без циклы:
-    // при бесконечной прокрутке стрелки не гаснут никогда)
+    // Затемнение стрелок на краях (только в режиме без циклы)
     function paintDisabled(idx) {
       if (loopMode) return;
       var m = maxIndex();
@@ -917,7 +934,7 @@
         if (t === pos) { paintDisabled(t); return; }
         slideIdx(t, animSpeed, false);
         paintDisabled(t);
-        if (t >= m) stopAuto(false); // дошли до конца ленты
+        if (t >= m) stopAuto(false);
       }
       if (!isAuto) afterManual();
     }
@@ -948,9 +965,7 @@
     // ---- Точки ----
     // С бесконечной прокруткой: точек ровно по числу карточек,
     // активная — текущая карточка. Без циклы: точек по числу
-    // позиций ленты (5 карточек по 3 в ряд — три позиции),
-    // это штатная механика: стрелки, точки и перетягивание
-    // всегда согласованы между собой.
+    // позиций ленты, стрелки/точки/перетягивание согласованы.
     var bullets = [];
     var lastDotCount = -1;
 
@@ -991,7 +1006,6 @@
         var i = bullets.indexOf(clicked);
         if (i < 0) return;
         if (loopMode) {
-          // короткий путь к карточке: вперёд или назад — как ближе
           var d = i - activeCard();
           if (d > N / 2) d -= N;
           else if (d < -N / 2) d += N;
@@ -1010,8 +1024,7 @@
       });
     }
 
-    // Пересчёт при изменении окна: после пересчёта Swiper возвращаем
-    // ленту на нашу позицию (в цикле — в средний набор) и обновляем точки
+    // Пересчёт при изменении окна
     function onRebuild() {
       slider.update();
       if (loopMode) {
@@ -1192,10 +1205,6 @@
     '#d97706,#f5b04d', '#7c3aed,#b18cf5'
   ];
 
-  /* z-index:5 у демо-стрелок — выше контейнера слайдера:
-     собственный CSS Swiper задаёт .swiper{z-index:1}.
-     На реальном сайте слои стрелкам задаёт Тильда, поэтому
-     в сгенерированный код эта правка не входит. */
   function demoArrow(cls, d, side) {
     return '<div class="' + cls + '" style="position:absolute;' + side + ':10px;top:50%;transform:translateY(-50%);z-index:5;' +
       'width:42px;height:42px;border-radius:50%;background:#fff;box-shadow:0 6px 18px rgba(23,26,31,.16);' +
