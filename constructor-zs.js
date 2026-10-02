@@ -1,24 +1,30 @@
 /* ============================================================
-   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v3.9
+   copilp.ru DEV MODS · Конструктор «Кастомный слайдер в зеро блоке» · v4.0
    Файл: constructor-zs.js · внешний (GitHub Pages: copilp-mods)
    Подключение (T123):
-   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=3.9" defer></script>
+   <script src="https://78surenshik-hash.github.io/copilp-mods/constructor-zs.js?v=4.0" defer></script>
    Внешний файл не переобрабатывается Тильдой и ЛК —
    это и есть решение проблемы с ЛК.
-   Изменения v3.9 (критический фикс — отказ от одного CDN):
-   - сгенерированный код больше не зависит от одного источника:
-     Swiper 8.4.7 загружается по цепочке источников — свой
-     GitHub Pages → jsdelivr → cdnjs → unpkg; если источник
-     недоступен (перебои/блокировки CDN), автоматически
-     подхватывается следующий. Раньше код ходил только на
-     jsdelivr — его сбой «убивал» все слайдеры разом и в превью,
-     и на клиентских страницах
-   - рекомендуется один раз залить в корень репозитория файлы
-     swiper-bundle.min.js и swiper-bundle.min.css (Swiper 8.4.7)
-   Изменения v3.8: закрепление превью переведено с CSS sticky
-   на JS (не ломается от overflow предков в Zero Block).
-   Изменения v3.7: бесконечная прокрутка бесконечна и при
-   перетягивании мышью; без циклы блок настроек «Точки» скрыт.
+   Изменения v4.0 (фикс «при первом заходе не работает»):
+   - сниппет больше не ограничен одним проходом поиска слайдеров:
+     сканирует страницу повторно каждые 250 мс первые ~7 секунд,
+     а также после полной загрузки страницы (load) и по сигналу
+     Тильды t_onReady. Причина бага: рендер-стек Тильды (tilda-zero
+     и др.) грузится async, и при «холодном» заходе блоки
+     отрисовывались позже единственного прохода сниппета — он
+     находил ноль зон и молча завершался; после обновления кэш
+     делал Тильду мгновенной и всё работало
+   - инициализация слайдера ждёт фактического применения CSS
+     Swiper (проба position:relative у .swiper) со страховочным
+     таймаутом 1,5 с — иначе размеры карточек считаются неверно
+   - поздний пересчёт: каждый слайдер пересчитывает геометрию
+     после полной загрузки страницы и через таймауты — на случай,
+     если Тильда отмасштабировала Zero Block позже инициализации
+   Изменения v3.9: Swiper грузится по цепочке источников
+   (GitHub Pages → jsdelivr → cdnjs → unpkg).
+   Изменения v3.8: закрепление превью на JS (не ломается от
+   overflow предков). v3.7: бесконечная прокрутка бесконечна и
+   при перетягивании; без циклы блок «Точки» скрыт.
    Сгенерированный код мода: БЕЗ обратных слэшей, закрывающий
    тег — S_CLOSE, защита от повторного запуска.
    ============================================================ */
@@ -635,9 +641,7 @@
   //
   // ИСТОЧНИКОВ НЕСКОЛЬКО: если первый недоступен (перебои или
   // блокировки CDN), автоматически подхватывается следующий.
-  // Слайдер не зависит от одного CDN и не может «умереть» разом
-  // из-за его сбоя. Первый источник — копия библиотеки на
-  // GitHub Pages проекта.
+  // Первый источник — копия библиотеки на GitHub Pages проекта.
   var SWIPER_CSS = [
     'https://78surenshik-hash.github.io/copilp-mods/swiper-bundle.min.css',
     'https://cdn.jsdelivr.net/npm/swiper@8.4.7/swiper-bundle.min.css',
@@ -663,12 +667,40 @@
     (document.head || document.documentElement).appendChild(node);
   }
 
+  // Проба: стили Swiper уже применились? У класса .swiper в CSS
+  // Swiper задан position:relative. Инициализировать слайдеры до
+  // применения стилей нельзя — размеры карточек посчитаются по
+  // «голому» layout и слайдер сломается (симптом: при первом
+  // заходе не листает, после обновления — работает).
+  function cssApplied() {
+    try {
+      var probe = document.createElement('div');
+      probe.className = 'swiper';
+      probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden';
+      (document.body || document.documentElement).appendChild(probe);
+      var ok = getComputedStyle(probe).position === 'relative';
+      document.body.removeChild(probe);
+      return ok;
+    } catch (err) { return true; }
+  }
+
+  // Ждём применения стилей, но не дольше 1.5 сек (страховка:
+  // если CSS так и не подтвердился — запускаемся всё равно)
+  function waitCssThen(fn) {
+    var waited = 0;
+    (function check() {
+      if (cssApplied() || waited >= 1500) { fn(); return; }
+      waited += 80;
+      setTimeout(check, 80);
+    })();
+  }
+
   function loadSwiper(cb) {
-    if (window.Swiper) { cb(); return; }
+    if (window.Swiper) { waitCssThen(cb); return; }
     // библиотеку уже грузит другая копия сниппета — дожидаемся её
     if (window.__dmSwiperWait) {
       var poll = setInterval(function () {
-        if (window.Swiper) { clearInterval(poll); cb(); }
+        if (window.Swiper) { clearInterval(poll); waitCssThen(cb); }
       }, 120);
       setTimeout(function () { clearInterval(poll); }, 12000);
       return;
@@ -688,14 +720,14 @@
         function () {}
       );
     }
-    // Библиотека: по успеху запускаем слайдеры
+    // Библиотека: по успеху запускаем слайдеры (после применения стилей)
     loadOne(SWIPER_JS, 0,
       function (u) {
         var s = document.createElement('script');
         s.src = u;
         return s;
       },
-      function () { window.__dmSwiperWait = false; cb(); },
+      function () { window.__dmSwiperWait = false; waitCssThen(cb); },
       function () {
         window.__dmSwiperWait = false;
         console.warn('[DEV MODS] Не удалось загрузить Swiper ни из одного источника — слайдеры не запущены');
@@ -727,6 +759,29 @@
       }
       createSlider(zone, section, match);
     });
+  }
+
+  // Первый заход на страницу: Zero Block и скрипты Тильды
+  // (tilda-zero и др. грузятся async) могут отрисовывать блоки
+  // дольше, чем загружается сниппет. Поэтому одного прохода мало —
+  // сканируем страницу несколько раз в первые секунды, а также
+  // после полной загрузки (load) и по сигналу Тильды t_onReady.
+  // Повторные проходы безопасны: каждый слайдер инициализируется
+  // один раз (защита классом swiper).
+  function startSliders() {
+    var scans = 0;
+    var iv = null;
+    function scan() {
+      boot();
+      scans++;
+      if (scans >= 30 && iv) { clearInterval(iv); iv = null; }
+    }
+    iv = setInterval(scan, 250); // ~7.5 секунд перепроверок
+    window.addEventListener('load', scan);
+    if (typeof window.t_onReady === 'function') {
+      try { window.t_onReady(scan); } catch (err) {}
+    }
+    scan();
   }
 
   function createSlider(zone, section, C) {
@@ -1039,14 +1094,28 @@
     window.addEventListener('resize', onRebuild);
     slider.on('breakpoint', function () { setTimeout(onRebuild, 0); });
 
+    // Поздний пересчёт: при первом заходе Тильда могла отмасштабировать
+    // Zero Block позже инициализации слайдера — тогда размеры были
+    // посчитаны неверно. Пересчитываем после полной загрузки страницы
+    // и через короткие таймауты
+    function lateUpdate() {
+      try { onRebuild(); } catch (err) {}
+    }
+    window.addEventListener('load', function () {
+      setTimeout(lateUpdate, 60);
+      setTimeout(lateUpdate, 400);
+    });
+    setTimeout(lateUpdate, 700);
+    setTimeout(lateUpdate, 1600);
+
     syncDots();
   }
 
-  // Запуск после готовности DOM
+  // Запуск: ждём Swiper, затем стартуем resilient-сканирование
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { loadSwiper(boot); });
+    document.addEventListener('DOMContentLoaded', function () { loadSwiper(startSliders); });
   } else {
-    loadSwiper(boot);
+    loadSwiper(startSliders);
   }
 })();`;
 
